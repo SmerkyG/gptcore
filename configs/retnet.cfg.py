@@ -90,7 +90,7 @@ cli.Config(
             #callback.GradAccumScheduleCallback(min=1, max=512//8, step=1, period=16_384_000, offset=8_192_000), #period=48_000_000, offset=24_000_000),#
         ],
     ),
-    optimizer_factory = lambda:
+    optimizer_factories = lambda:
         torch.optim.Adam(
             lr=6e-4,
             betas=(0.9,0.999),

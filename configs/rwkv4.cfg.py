@@ -78,7 +78,7 @@ cli.Config(
             lightning.pytorch.callbacks.ModelCheckpoint(), # should save after every validation anyway #every_n_train_steps=128
         ],
     ),
-    optimizer_factory = lambda:
+    optimizer_factories = lambda:
         torch.optim.Adam(
             lr=6e-4,
             betas=(0.9,0.999),

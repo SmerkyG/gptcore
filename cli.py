@@ -34,8 +34,9 @@ class Config:
     seed_everything:int|None=1234
     compile:bool=False
     
-    model_factory:Factory[model.core.IEncoderDecoder]=None
-    optimizer_factory:Factory[torch.optim.Optimizer]=None,
+    model_factory:Factory[model.core.IEncoderDecoder]|None=None
+    optimizer_factories:list[Factory[torch.optim.Optimizer]]|Factory[torch.optim.Optimizer]|None=None
+    scheduler_factories:list[Factory[torch.optim.lr_scheduler.LRScheduler]]|Factory[torch.optim.lr_scheduler.LRScheduler]|None=None
     loss_fn_factory:Factory[torch.nn.Module] = factory(torch.nn.CrossEntropyLoss, ignore_index=-1)
     loss_wrapper_factory:Factory[torch.autograd.Function] = factory()
 
@@ -48,7 +49,7 @@ class Config:
     val_dataloader_factory:Factory[torch.utils.data.DataLoader]=None
     trainer_factory:Factory[lightning.Trainer]=factory(lightning.Trainer, precision=32)
     fit_factory:Factory=None
-    metrics_factories:list=field(default_factory=lambda:{'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)})
+    metric_factories:list=field(default_factory=lambda:{'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)})
 
     sampler_factory:Factory=factory(sampler.TopKPTailFreeSampler, temperature=1.0, top_p=0.7)
 
@@ -83,14 +84,15 @@ def run(command, cfg):
         if cfg.train_dataset_seed is not None:
             train_dataset = train_dataset.shuffle(seed=cfg.train_dataset_seed)
 
-        val_dataset = val_dataset.take(1024)
+        # FIXME - figure out some other way to support this and shuffle from huggingface
+        #val_dataset = val_dataset.take(1024)
 
         train_loader : torch.utils.data.DataLoader = cfg.train_dataloader_factory(dataset = train_dataset, collate_fn=collate_target_tokens_offset_by_one)
         val_loader : torch.utils.data.DataLoader = cfg.val_dataloader_factory(dataset = val_dataset, collate_fn=collate_target_tokens_offset_by_one)
 
 
     if command == 'train':
-        model = lit.LightningModel(model_factory=cfg.model_factory, optimizers_factory=cfg.optimizer_factory, loss_fn_factory=cfg.loss_fn_factory, loss_wrapper_factory=cfg.loss_wrapper_factory, metrics_factories=cfg.metrics_factories)
+        model = lit.LightningModel(model_factory=cfg.model_factory, optimizer_factories=cfg.optimizer_factories, loss_fn_factory=cfg.loss_fn_factory, loss_wrapper_factory=cfg.loss_wrapper_factory, metric_factories=cfg.metric_factories, scheduler_factories=cfg.scheduler_factories)
 
         # test model on one batch first so we get good errors quickly even when compiling or logging into wandb
         if cfg.pretest and (cfg.compile or len(cfg.trainer_factory['logger']) > 0):
