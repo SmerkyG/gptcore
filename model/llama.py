@@ -10,8 +10,6 @@ from torch import Tensor
 
 from util.config import Factory
 
-from . import picogpt
-
 import model.interface
 from model.hparams import HParams
 
@@ -32,7 +30,7 @@ class Llama2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer)
         return self.dropout(self.w_out(self.w_gate(x) * self.activation(self.w_hidden(x))))
 
 class Llama2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int, attention_factory : Factory = Factory(core.TorchAttention), n_kv_head : Optional[int] = None):
+    def __init__(self, hparams : HParams, layer_id : int, attention_factory : Factory = Factory(model.core.TorchAttention), n_kv_head : Optional[int] = None):
         super().__init__()
         self.hparams = hparams
         self.n_kv_head = n_kv_head if n_kv_head is not None else hparams.n_head
