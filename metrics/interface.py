@@ -4,15 +4,6 @@ from torch import Tensor
 
 from abc import abstractmethod
 
-class IMetric():
-    @abstractmethod
-    def update(self, inputs, logits:Tensor, predictions:Tensor, labels:Tensor, loss:Tensor):
-        raise NotImplementedError()
-
-    @abstractmethod
-    def compute(self):
-        raise NotImplementedError()
-
 class MetricArgs():
     def __init__(self, inputs, logits:Tensor, predictions:Tensor, labels:Tensor, loss:Tensor):
         with torch.no_grad():
@@ -21,3 +12,17 @@ class MetricArgs():
             self.predictions = predictions.detach()
             self.labels = labels.detach()
             self.loss = loss.detach()
+
+class IMetric():
+    @abstractmethod
+    def update(self, margs:MetricArgs):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def compute(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def clear(self):
+        raise NotImplementedError()
+

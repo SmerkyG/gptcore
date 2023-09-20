@@ -41,7 +41,9 @@ class LightningModel(LightningModule):
         self.total_runtime = 0.0
         self.grad_acc_iter = 0
 
-        self.metrics = metrics
+        self.metrics = dict()
+        for name, factory in metrics_factories.items():
+            self.metrics[name] = factory()
 
     def on_save_checkpoint(self, checkpoint):
         checkpoint['tokens'] = self.tokens_processed
@@ -82,7 +84,7 @@ class LightningModel(LightningModule):
         loss, logits, preds = self._get_loss_logits_preds(batch, batch_idx)
 
         margs = metrics.MetricArgs(inputs, logits, preds, labels, loss)
-        for metric in self.metrics:
+        for metric in self.metrics.values():
             metric.update(margs)
 
         self.tokens_processed += batch[0].size(-2) * batch[0].size(-1)
@@ -95,7 +97,7 @@ class LightningModel(LightningModule):
             dt = 1.0
         self.last_iter_time = t
 
-        if self.logging_loss_accum.is_fresh():
+        if (batch_idx + 1) % self.trainer.log_every_n_steps == 0:
             ms = (self.total_runtime - self.last_log_runtime) * 1000. / self.trainer.log_every_n_steps
             self.last_log_runtime = self.total_runtime
             if self.trainer.is_global_zero:
@@ -108,14 +110,14 @@ class LightningModel(LightningModule):
     
                 str = f"token {self.tokens_processed:,}: step {batch_idx}, "
                 for name, metric in self.metrics.items():
-                    str += f'{name}={metric.compute():.4f}, '
-                str += f", {gb:.1f}gb, {ms:.2f}ms, {self.total_runtime:.1f}sec"
+                    metric_value = metric.compute()
+                    metric.clear()
+                    self.log('train/'+name, metric_value, on_step=True, rank_zero_only=True)
+                    str += f'{name}={metric_value:.4f}, '
+                str += f"{gb:.1f}gb, {ms:.2f}ms, {self.total_runtime:.1f}sec"
                 print(str)
 
                 self.tokens_processed_prev_log = self.tokens_processed
-
-            for name, metric in self.metrics.items():
-                self.log('train/'+name, metric.compute(), on_step=True, rank_zero_only=True)
 
             self.log("tokens", float(self.tokens_processed), on_step=True, rank_zero_only=True)
         
@@ -130,7 +132,7 @@ class LightningModel(LightningModule):
             print()
 
             # clear metrics
-            for metric in self.metrics:
+            for metric in self.metrics.values():
                 metric.compute()
 
     def validation_step(self, batch, batch_idx):
@@ -141,13 +143,14 @@ class LightningModel(LightningModule):
             metric.update(margs)
             # on_epoch causes this to be logged in aggregate rather than per batch
             self.log('val/'+name, metric.compute(), on_epoch=True, rank_zero_only=True)
+            metric.clear()
         return logits
 
     def on_validation_epoch_end(self):
         if self.trainer.is_global_zero:
             # clear metrics
-            for metric in self.metrics:
-                metric.compute()
+            for metric in self.metrics.values():
+                metric.clear()
 
             callback_metrics = self.trainer._logger_connector.callback_metrics
 
