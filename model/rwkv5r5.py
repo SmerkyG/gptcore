@@ -116,7 +116,7 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
 
         r = self.receptance(xr).view(B, TT, self.n_head, self.rk_head_size).transpose(1, 2)            # BTC -> BHTS
         k = self.key(xk).view(B, TT, self.n_head, self.rk_head_size).transpose(1, 2) # BTC -> BHTS
-        v = F.silu(self.value(xv)).view(B, TT, self.n_head, self.v_head_size).transpose(1, 2)                 # BTC -> BHTS
+        v = self.value(xv).view(B, TT, self.n_head, self.v_head_size).transpose(1, 2)                 # BTC -> BHTS
         g = F.silu(self.gate(xg))
         
         r = self.rotary_positional_embedding(r)
