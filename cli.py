@@ -38,7 +38,7 @@ class Config:
     loss_wrapper_factory:Factory[torch.autograd.Function] = factory()
 
     tokenizer_factory:Factory=factory()
-    dataset_transform_factories:list=factory(list)
+    dataset_transform_factories:list=field(default_factory=partial(list))
     train_dataset_seed:int|None=32
     train_dataset_factory:Factory[torch.utils.data.dataset.Dataset]=None
     train_dataloader_factory:Factory[torch.utils.data.DataLoader]=None
