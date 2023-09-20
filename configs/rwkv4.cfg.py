@@ -25,7 +25,7 @@ import model.retnet
 cli.Config(
     seed_everything = 1337,
     compile = True,
-    model_factory = lambda: model.core.Decoder(
+    model_factory = lambda: model.picogpt.Decoder(
         hparams = model.hparams.HParams(
             n_layer=12,
             n_head=12,
@@ -78,7 +78,7 @@ cli.Config(
             lightning.pytorch.callbacks.ModelCheckpoint(), # should save after every validation anyway #every_n_train_steps=128
         ],
     ),
-    optimizer_factories = lambda:
+    optimizer_factory = lambda:
         torch.optim.Adam(
             lr=6e-4,
             betas=(0.9,0.999),

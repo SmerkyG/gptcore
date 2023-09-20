@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
 import torch.optim.lr_scheduler
+import scheduler
 
 import metrics
 
@@ -23,19 +24,19 @@ class LightningModel(LightningModule):
     def __init__(
         self,
         model_factory : Factory[nn.Module],
-        optimizer_factories : Factory[torch.optim.Optimizer] | list[Factory[torch.optim.Optimizer]] | None,
+        optimizer_factory : Factory[torch.optim.Optimizer|None],
         loss_fn_factory : Factory[nn.Module],
         loss_wrapper_factory : Factory = Factory(),
         metric_factories : dict[Factory[metrics.IMetric]] = {'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)},
-        scheduler_factories : Factory[torch.optim.lr_scheduler.LRScheduler] | list[Factory[torch.optim.lr_scheduler.LRScheduler]] | None = None,
+        scheduler_config : scheduler.LRSchedulerConfig | None = None,
     ) -> None:
         super().__init__()        
         # saving additional 'model_str' and 'optimizers_str' since wandb otherwise won't save the full depth of the serialized config, so you can't look back and see all hyperparameters later
-        self.save_hyperparameters(dict(model=model_factory, optimizers=optimizer_factories, loss_fn=loss_fn_factory, loss_wrapper=loss_wrapper_factory, schedulers=scheduler_factories, model_str=str(model_factory), optimizers_str=str(optimizer_factories), loss_fn_str=str(loss_fn_factory), loss_wrapper_str=str(loss_wrapper_factory), schedulers_str=str(scheduler_factories)))
+        self.save_hyperparameters(dict(model=model_factory, optimizer=optimizer_factory, loss_fn=loss_fn_factory, loss_wrapper=loss_wrapper_factory, scheduler=scheduler_config, model_str=str(model_factory), optimizer_str=str(optimizer_factory), loss_fn_str=str(loss_fn_factory), loss_wrapper_str=str(loss_wrapper_factory), scheduler_str=str(scheduler_config)))
         #self.logger.experiment.config.update(dict(model=model_factory, optimizers=optimizers_factory))
         self.model = model_factory()
-        self.optimizer_factories = optimizer_factories
-        self.scheduler_factories = scheduler_factories
+        self.optimizer_factory = optimizer_factory
+        self.scheduler_config = scheduler_config
         self.loss_fn = loss_fn_factory()
         self.loss_wrapper = loss_wrapper_factory()
         self.tokens_processed = 0
@@ -71,23 +72,12 @@ class LightningModel(LightningModule):
         #         {'params':[p for p in params if p.dim() < 2], 'weight_decay:': 0}
         #     ]
 
-        if self.optimizer_factories is None:
-            self.optimizer_factories = []
-        elif not isinstance(self.optimizer_factories, list):
-            self.optimizer_factories = [self.optimizer_factories]
-        optimizers = []
-        for optimizer_factory in self.optimizer_factories:
-            optimizers.append(optimizer_factory(params))
+        optimizer = self.optimizer_factory(params)
 
-        if self.scheduler_factories is None:
-            self.scheduler_factories = []
-        elif not isinstance(self.scheduler_factories, list):
-            self.scheduler_factories = [self.scheduler_factories]
-        schedulers = []
-        for scheduler_factory in self.scheduler_factories:
-            schedulers.append(scheduler_factory())
-
-        return (optimizers, schedulers)
+        if self.scheduler_config is None:
+            return optimizer
+        else:
+            return dict(optimizer=optimizer, lr_scheduler=self.scheduler_config.to_dict(optimizer))
 
     def _get_loss_logits_preds(self, batch, batch_idx):
         x, y = batch

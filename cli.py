@@ -16,6 +16,7 @@ from functools import partial
 import model.core
 
 import sampler
+import scheduler
 
 import metrics
 
@@ -27,7 +28,7 @@ def factory(*args, **kwargs):
     return field(default_factory=partial(Factory, *args, **kwargs))
 def rfactory(*args, **kwargs):
     return field(default_factory=partial(RFactory, *args, **kwargs))
-
+ 
 @dataclass
 class Config:
     pretest:bool=True
@@ -35,8 +36,8 @@ class Config:
     compile:bool=False
     
     model_factory:Factory[model.core.IEncoderDecoder]|None=None
-    optimizer_factories:list[Factory[torch.optim.Optimizer]]|Factory[torch.optim.Optimizer]|None=None
-    scheduler_factories:list[Factory[torch.optim.lr_scheduler.LRScheduler]]|Factory[torch.optim.lr_scheduler.LRScheduler]|None=None
+    optimizer_factory:Factory[torch.optim.Optimizer|None]=factory()
+    scheduler_config:scheduler.LRSchedulerConfig = field(default_factory=lambda: scheduler.LRSchedulerConfig())
     loss_fn_factory:Factory[torch.nn.Module] = factory(torch.nn.CrossEntropyLoss, ignore_index=-1)
     loss_wrapper_factory:Factory[torch.autograd.Function] = factory()
 
@@ -92,7 +93,7 @@ def run(command, cfg):
 
 
     if command == 'train':
-        model = lit.LightningModel(model_factory=cfg.model_factory, optimizer_factories=cfg.optimizer_factories, loss_fn_factory=cfg.loss_fn_factory, loss_wrapper_factory=cfg.loss_wrapper_factory, metric_factories=cfg.metric_factories, scheduler_factories=cfg.scheduler_factories)
+        model = lit.LightningModel(model_factory=cfg.model_factory, optimizer_factory=cfg.optimizer_factory, loss_fn_factory=cfg.loss_fn_factory, loss_wrapper_factory=cfg.loss_wrapper_factory, metric_factories=cfg.metric_factories, scheduler_config=cfg.scheduler_config)
 
         # test model on one batch first so we get good errors quickly even when compiling or logging into wandb
         if cfg.pretest and (cfg.compile or len(cfg.trainer_factory['logger']) > 0):

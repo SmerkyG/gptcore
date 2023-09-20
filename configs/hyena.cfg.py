@@ -24,7 +24,7 @@ import model.retnet
 cli.Config(
     seed_everything = 1337,
     compile = True,
-    model_factory = lambda: model.core.Decoder(
+    model_factory = lambda: model.picogpt.Decoder(
         hparams = model.hparams.HParams(
             n_layer=12,
             n_head=12,
@@ -36,7 +36,7 @@ cli.Config(
             d_v_ratio=2,
 
             self_attention_sublayer_factory = lambda: model.hyena.HyenaAttentionSubLayer(),
-            feedforward_sublayer_factory = lambda: model.core.RWKVChannelMix(),
+            feedforward_sublayer_factory = lambda: model.picogpt.RWKVChannelMix(),
         ),
     ),
     tokenizer_factory = lambda: transformers.AutoTokenizer.from_pretrained('gpt2'),
@@ -76,7 +76,7 @@ cli.Config(
             lightning.pytorch.callbacks.ModelCheckpoint(), # should save after every validation anyway #every_n_train_steps=128
         ],
     ),
-    optimizer_factories = lambda:
+    optimizer_factory = lambda:
         torch.optim.Adam(
             lr=6e-4,
             betas=(0.9,0.999),

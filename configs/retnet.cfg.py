@@ -25,7 +25,7 @@ import model.retnet
 cli.Config(
     seed_everything = 1337,
     #compile = True,
-    model_factory = lambda: model.core.Decoder(
+    model_factory = lambda: model.picogpt.Decoder(
         hparams = model.hparams.HParams(
             n_layer=12,
             n_head=3,
@@ -36,8 +36,8 @@ cli.Config(
 
             d_v_ratio=2,
 
-            #self_attention_sublayer_factory = lambda: model.core.AttentionSubLayer(),
-            #feedforward_sublayer_factory = lambda: model.core.RWKVChannelMix(),
+            #self_attention_sublayer_factory = lambda: model.picogpt.AttentionSubLayer(),
+            #feedforward_sublayer_factory = lambda: model.picogpt.RWKVChannelMix(),
 
             self_attention_sublayer_factory= lambda: model.retnet.MultiScaleRetentionSubLayer(),
             feedforward_sublayer_factory = lambda: model.gpt2.GPT2FeedForwardSubLayer(hidden_activation_factory = lambda: nn.GELU(approximate='tanh')),
@@ -46,7 +46,7 @@ cli.Config(
             #feedforward_sublayer_factory = lambda: model.gpt2.GPT2FeedForwardSubLayer(),
 
             #self_attention_sublayer_factory = lambda: model.hyena.HyenaAttentionSubLayer(),
-            #feedforward_sublayer_factory = lambda: model.core.RWKVChannelMix(),
+            #feedforward_sublayer_factory = lambda: model.picogpt.RWKVChannelMix(),
 
             #self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(n_kv_head=6),
             #feedforward_sublayer_factory = lambda: model.llama.Llama2FeedForwardSubLayer(),
@@ -90,7 +90,7 @@ cli.Config(
             #callback.GradAccumScheduleCallback(min=1, max=512//8, step=1, period=16_384_000, offset=8_192_000), #period=48_000_000, offset=24_000_000),#
         ],
     ),
-    optimizer_factories = lambda:
+    optimizer_factory = lambda:
         torch.optim.Adam(
             lr=6e-4,
             betas=(0.9,0.999),
