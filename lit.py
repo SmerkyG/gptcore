@@ -82,7 +82,7 @@ class LightningModel(LightningModule):
         loss, logits, preds = self._get_loss_logits_preds(batch, batch_idx)
 
         margs = metrics.MetricArgs(inputs, logits, preds, labels, loss)
-        for metric in metrics:
+        for metric in self.metrics:
             metric.update(margs)
 
         self.tokens_processed += batch[0].size(-2) * batch[0].size(-1)
@@ -107,14 +107,14 @@ class LightningModel(LightningModule):
                     gb = 0
     
                 str = f"token {self.tokens_processed:,}: step {batch_idx}, "
-                for name, metric in metrics.items():
+                for name, metric in self.metrics.items():
                     str += f'{name}={metric.compute():.4f}, '
                 str += f", {gb:.1f}gb, {ms:.2f}ms, {self.total_runtime:.1f}sec"
                 print(str)
 
                 self.tokens_processed_prev_log = self.tokens_processed
 
-            for name, metric in metrics.items():
+            for name, metric in self.metrics.items():
                 self.log('train/'+name, metric.compute(), on_step=True, rank_zero_only=True)
 
             self.log("tokens", float(self.tokens_processed), on_step=True, rank_zero_only=True)
@@ -130,14 +130,14 @@ class LightningModel(LightningModule):
             print()
 
             # clear metrics
-            for metric in metrics:
+            for metric in self.metrics:
                 metric.compute()
 
     def validation_step(self, batch, batch_idx):
         inputs, labels = batch
         loss, logits, preds = self._get_loss_logits_preds(batch, batch_idx)
         margs = metrics.MetricArgs(inputs, logits, preds, labels, loss)
-        for name, metric in metrics.items():
+        for name, metric in self.metrics.items():
             metric.update(margs)
             # on_epoch causes this to be logged in aggregate rather than per batch
             self.log('val/'+name, metric.compute(), on_epoch=True, rank_zero_only=True)
@@ -146,16 +146,15 @@ class LightningModel(LightningModule):
     def on_validation_epoch_end(self):
         if self.trainer.is_global_zero:
             # clear metrics
-            for metric in metrics:
+            for metric in self.metrics:
                 metric.compute()
 
-            metrics = self.trainer._logger_connector.callback_metrics
-            loss = metrics['val/loss']
-            acc = metrics['val/acc']
+            callback_metrics = self.trainer._logger_connector.callback_metrics
 
             str = f"VALIDATION COMPLETE. "
-            for name in metrics.keys():
-                value = metrics['val/'+name]
+            for name in self.metrics.keys():
+                value = callback_metrics['val/'+name]
+                str += f"{value:.4f} "
             console_clear_last_line()
             print(str)
             print()
