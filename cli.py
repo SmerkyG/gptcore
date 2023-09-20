@@ -37,7 +37,7 @@ class Config:
     loss_fn_factory:Factory[torch.nn.Module] = factory(torch.nn.CrossEntropyLoss, ignore_index=-1)
     loss_wrapper_factory:Factory[torch.autograd.Function] = factory()
 
-    tokenizer_factory:Factory=None
+    tokenizer_factory:Factory=factory()
     dataset_transform_factories:list=factory(list)
     train_dataset_seed:int|None=32
     train_dataset_factory:Factory[torch.utils.data.dataset.Dataset]=None
