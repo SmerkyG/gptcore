@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
-#import torchmetrics
+import metrics
 
 from lightning import LightningModule
 
@@ -17,27 +17,6 @@ from util.config import Factory
 def console_clear_last_line():
     print('\033[1A', end='\x1b[2K')
 
-class Accumulator():
-    def __init__(self):
-        self.values = []
-        self.step = 0
-        self.avg = 0.0
-
-    def update(self, value, max_steps):
-        # avoid sync point by appending to list and not moving to cpu until necessary
-        self.values.append(value.detach())
-        if len(self.values) == max_steps:
-            # FIXME - sync point here, but is there a way to move these values to cpu faster?
-            self.avg = sum(self.values) / len(self.values)
-            self.values.clear()
-
-    def is_fresh(self):
-        return len(self.values) == 0
-
-    def latest_avg(self):
-        return self.avg
-        
-
 class LightningModel(LightningModule):
     def __init__(
         self,
@@ -45,6 +24,7 @@ class LightningModel(LightningModule):
         optimizers_factory : Factory[torch.optim.Optimizer],
         loss_fn_factory : Factory[nn.Module],
         loss_wrapper_factory : Factory = Factory(),
+        metrics_factories : dict[Factory[metrics.IMetric]] = {'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)},
     ) -> None:
         super().__init__()        
         # saving additional 'model_str' and 'optimizers_str' since wandb otherwise won't save the full depth of the serialized config, so you can't look back and see all hyperparameters later
@@ -58,10 +38,10 @@ class LightningModel(LightningModule):
         self.tokens_processed_prev_log = 1
         self.last_iter_time = None
         self.last_log_runtime = 0.0
-        self.logging_loss_accum = Accumulator()
-        self.logging_acc_accum = Accumulator()
         self.total_runtime = 0.0
         self.grad_acc_iter = 0
+
+        self.metrics = metrics
 
     def on_save_checkpoint(self, checkpoint):
         checkpoint['tokens'] = self.tokens_processed
@@ -87,25 +67,23 @@ class LightningModel(LightningModule):
 
         return self.optimizers_factory(params)
 
-    def _get_loss_logits_acc(self, batch, batch_idx):
+    def _get_loss_logits_preds(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
     
         loss = self.loss_fn(logits.view(-1, logits.size(-1)), y.flatten())
-
-        acc = 0.0
         with torch.no_grad():
             preds = logits.argmax(dim=-1)
-            acc = preds.eq(y).sum() / (y.size(0)*y.size(1))
-            # NOTE - torchmetrics.accuracy does NOT WORK at the moment with torch.compile
-            #acc = torchmetrics.functional.accuracy(logits.flatten(0, -2), y.flatten(), task="multiclass", num_classes=self.model.hparams.vocab_size)
 
-        return loss, logits, acc
+        return loss, logits, preds
 
     def training_step(self, batch, batch_idx):
-        loss, logits, acc = self._get_loss_logits_acc(batch, batch_idx)
-        self.logging_loss_accum.update(loss, self.trainer.log_every_n_steps)
-        self.logging_acc_accum.update(acc, self.trainer.log_every_n_steps)
+        inputs, labels = batch
+        loss, logits, preds = self._get_loss_logits_preds(batch, batch_idx)
+
+        margs = metrics.MetricArgs(inputs, logits, preds, labels, loss)
+        for metric in metrics:
+            metric.update(margs)
 
         self.tokens_processed += batch[0].size(-2) * batch[0].size(-1)
 
@@ -127,11 +105,18 @@ class LightningModel(LightningModule):
                     gb = torch.cuda.memory_allocated(0)/1024/1024/1024.0
                 else:
                     gb = 0
-                print(f"token {self.tokens_processed:,}: step {batch_idx} loss {self.logging_loss_accum.latest_avg():.4f}, acc {self.logging_acc_accum.latest_avg()*100:.2f}%, {gb:.1f}gb, {ms:.2f}ms, {self.total_runtime:.1f}sec")
+    
+                str = f"token {self.tokens_processed:,}: step {batch_idx}, "
+                for name, metric in metrics.items():
+                    str += f'{name}={metric.compute():.4f}, '
+                str += f", {gb:.1f}gb, {ms:.2f}ms, {self.total_runtime:.1f}sec"
+                print(str)
+
                 self.tokens_processed_prev_log = self.tokens_processed
 
-            self.log("train/loss", self.logging_loss_accum.latest_avg(), on_step=True, rank_zero_only=True)
-            self.log("train/acc", self.logging_acc_accum.latest_avg(), on_step=True, rank_zero_only=True)
+            for name, metric in metrics.items():
+                self.log('train/'+name, metric.compute(), on_step=True, rank_zero_only=True)
+
             self.log("tokens", float(self.tokens_processed), on_step=True, rank_zero_only=True)
         
         if self.loss_wrapper is not None:
@@ -144,18 +129,33 @@ class LightningModel(LightningModule):
             print(f"STARTING VALIDATION")
             print()
 
+            # clear metrics
+            for metric in metrics:
+                metric.compute()
+
     def validation_step(self, batch, batch_idx):
-        loss, logits, acc = self._get_loss_logits_acc(batch, batch_idx)
-        if self.trainer.is_global_zero:
-            self.log('val/loss', loss, on_epoch=True) # on_epoch causes this to be logged in aggregate rather than per batch
-            self.log('val/acc', acc, on_epoch=True)
+        inputs, labels = batch
+        loss, logits, preds = self._get_loss_logits_preds(batch, batch_idx)
+        margs = metrics.MetricArgs(inputs, logits, preds, labels, loss)
+        for name, metric in metrics.items():
+            metric.update(margs)
+            # on_epoch causes this to be logged in aggregate rather than per batch
+            self.log('val/'+name, metric.compute(), on_epoch=True, rank_zero_only=True)
         return logits
 
     def on_validation_epoch_end(self):
         if self.trainer.is_global_zero:
+            # clear metrics
+            for metric in metrics:
+                metric.compute()
+
             metrics = self.trainer._logger_connector.callback_metrics
             loss = metrics['val/loss']
             acc = metrics['val/acc']
+
+            str = f"VALIDATION COMPLETE. "
+            for name in metrics.keys():
+                value = metrics['val/'+name]
             console_clear_last_line()
-            print(f"VALIDATION COMPLETE. loss:{loss:.2f} acc:{acc*100.0:.2f}% ppl:{math.exp(loss):.2f}")
+            print(str)
             print()

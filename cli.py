@@ -17,6 +17,8 @@ import model.core
 
 import sampler
 
+import metrics
+
 from dataclasses import dataclass, field
 
 from functools import partial
@@ -38,7 +40,7 @@ class Config:
     loss_wrapper_factory:Factory[torch.autograd.Function] = factory()
 
     tokenizer_factory:Factory=factory()
-    dataset_transform_factories:list=field(default_factory=partial(list))
+    dataset_transform_factories:list=field(default_factory=lambda: [])
     train_dataset_seed:int|None=32
     train_dataset_factory:Factory[torch.utils.data.dataset.Dataset]=None
     train_dataloader_factory:Factory[torch.utils.data.DataLoader]=None
@@ -46,6 +48,7 @@ class Config:
     val_dataloader_factory:Factory[torch.utils.data.DataLoader]=None
     trainer_factory:Factory[lightning.Trainer]=factory(lightning.Trainer, precision=32)
     fit_factory:Factory=None
+    metrics_factories:list=field(default_factory=lambda:{'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)})
 
     sampler_factory:Factory=factory(sampler.TopKPTailFreeSampler, temperature=1.0, top_p=0.7)
 
@@ -87,7 +90,7 @@ def run(command, cfg):
 
 
     if command == 'train':
-        model = lit.LightningModel(model_factory=cfg.model_factory, optimizers_factory=cfg.optimizer_factory, loss_fn_factory=cfg.loss_fn_factory, loss_wrapper_factory=cfg.loss_wrapper_factory)
+        model = lit.LightningModel(model_factory=cfg.model_factory, optimizers_factory=cfg.optimizer_factory, loss_fn_factory=cfg.loss_fn_factory, loss_wrapper_factory=cfg.loss_wrapper_factory, metrics_factories=cfg.metrics_factories)
 
         # test model on one batch first so we get good errors quickly even when compiling or logging into wandb
         if cfg.pretest and (cfg.compile or len(cfg.trainer_factory['logger']) > 0):
