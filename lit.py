@@ -108,13 +108,13 @@ class LightningModel(LightningModule):
                 else:
                     gb = 0
     
-                str = f"token {self.tokens_processed:,}: step {batch_idx}, "
+                str = f"epoch:{self.current_epoch} token:{self.tokens_processed:,} step:{batch_idx} "
                 for name, metric in self.metrics.items():
                     metric_value = metric.compute()
                     metric.clear()
                     self.log('train/'+name, metric_value, on_step=True, rank_zero_only=True)
-                    str += f'{name}={metric_value:.4f}, '
-                str += f"{gb:.1f}gb, {ms:.2f}ms, {self.total_runtime:.1f}sec"
+                    str += f'{name}:{metric_value:.4f} '
+                str += f"{gb:.1f}gb {ms:.2f}ms {self.total_runtime:.1f}sec"
                 print(str)
 
                 self.tokens_processed_prev_log = self.tokens_processed
