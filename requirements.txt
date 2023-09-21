@@ -1,0 +1,8 @@
+torch
+torchdata
+lightning
+deepspeed
+einops
+transformers
+datasets
+wandb
