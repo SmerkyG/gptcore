@@ -5,11 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-import picogpt
+import model
 import sampler
 
 class Generator(nn.Module):
-    def __init__(self, model : core.IEncoderDecoder):
+    def __init__(self, model : model.core.IEncoderDecoder):
         super().__init__()
         self.model = model
         self.hparams = self.model.hparams
