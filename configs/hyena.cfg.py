@@ -4,8 +4,6 @@ import lightning.pytorch.loggers
 import optimizer
 from dataset import MMapDataset
 from util.config import Factory
-import embed
-import callback
 import lightning.pytorch.callbacks
 from lightning.pytorch.strategies import DeepSpeedStrategy
 import lightning.pytorch.strategies
@@ -15,16 +13,16 @@ import dataset
 import model
 import model.hparams
 import mask
-import hparams
 import cli
 import dataset.tokenizer
 
+import model.core
 import model.retnet
 
 cli.Config(
     seed_everything = 1337,
     compile = True,
-    model_factory = lambda: model.picogpt.Decoder(
+    model_factory = lambda: model.core.Decoder(
         hparams = model.hparams.HParams(
             n_layer=12,
             n_head=12,
@@ -36,7 +34,7 @@ cli.Config(
             d_v_ratio=2,
 
             self_attention_sublayer_factory = lambda: model.hyena.HyenaAttentionSubLayer(),
-            feedforward_sublayer_factory = lambda: model.picogpt.RWKVChannelMix(),
+            feedforward_sublayer_factory = lambda: model.core.RWKVFeedForwardSubLayer(),
         ),
     ),
     tokenizer_factory = lambda: transformers.AutoTokenizer.from_pretrained('gpt2'),

@@ -5,8 +5,6 @@ import lightning.pytorch.loggers
 import optimizer
 from dataset import MMapDataset
 from util.config import Factory
-import embed
-import callback
 import lightning.pytorch.callbacks
 from lightning.pytorch.strategies import DeepSpeedStrategy
 import lightning.pytorch.strategies
@@ -16,16 +14,17 @@ import dataset
 import model
 import model.hparams
 import mask
-import hparams
 import cli
 import dataset.tokenizer
 
+import model.core
 import model.retnet
+import model.gpt2
 
 cli.Config(
     seed_everything = 1337,
     #compile = True,
-    model_factory = lambda: model.picogpt.Decoder(
+    model_factory = lambda: model.core.Decoder(
         hparams = model.hparams.HParams(
             n_layer=12,
             n_head=3,
@@ -36,20 +35,8 @@ cli.Config(
 
             d_v_ratio=2,
 
-            #self_attention_sublayer_factory = lambda: model.picogpt.AttentionSubLayer(),
-            #feedforward_sublayer_factory = lambda: model.picogpt.RWKVChannelMix(),
-
             self_attention_sublayer_factory= lambda: model.retnet.MultiScaleRetentionSubLayer(),
             feedforward_sublayer_factory = lambda: model.gpt2.GPT2FeedForwardSubLayer(hidden_activation_factory = lambda: nn.GELU(approximate='tanh')),
-
-            #self_attention_sublayer_factory = lambda: model.gpt2.GPT2AttentionSubLayer(),
-            #feedforward_sublayer_factory = lambda: model.gpt2.GPT2FeedForwardSubLayer(),
-
-            #self_attention_sublayer_factory = lambda: model.hyena.HyenaAttentionSubLayer(),
-            #feedforward_sublayer_factory = lambda: model.picogpt.RWKVChannelMix(),
-
-            #self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(n_kv_head=6),
-            #feedforward_sublayer_factory = lambda: model.llama.Llama2FeedForwardSubLayer(),
         ),
     ),
     tokenizer_factory = lambda: transformers.AutoTokenizer.from_pretrained('gpt2'),
