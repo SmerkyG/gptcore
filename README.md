@@ -76,6 +76,14 @@ Consider trying other huggingface datasets, such as OpenWebText:
 
 The example config files show how to use [WandB](https://wandb.ai/home) for logging, but any logger, multiple loggers, or even no logger can be used. See [lightning docs](https://lightning.ai/docs/app/stable/) for info.
 
+You can easily choose which metrics to log using the config system and parameterize them like so (or create new ones):
+```
+metric_factories=dict(
+    loss=lambda: metrics.Loss(),
+    acc=lambda: metrics.Accuracy()
+),
+```
+
 ## compile
 
 Setting `compile = True` causes your model to be compiled using `torch.compile(model)` This can dramatically improve training speeds.
@@ -123,7 +131,7 @@ The unembedding which translates from the final layer embeddings back to token i
 #### Rotary Positional Embedding (RoPE) [citation](https://arxiv.org/abs/2104.09864) / Attention with Linear Biases (ALiBi) [citation](https://arxiv.org/abs/2108.12409)
 We use RoPE or ALiBi to adjust query and key values before the attention computation, so that a flexible form of positional information is used by the network. This causes faster learning as well as
 Unfortunately, we do not yet include the upcoming version of FlashAttention that would support ALiBi style biases, so ALiBi is currently significantly slower than RoPE using our platform.
-#### RMSNorm / L2Norm [citation](https://arxiv.org/abs/2307.14995)
+#### RMSNorm / L2Norm [citation](https://arxiv.org/abs/1910.07467) [citation](https://arxiv.org/abs/2307.14995)
 Prior formulations used BatchNorm or LayerNorm, but with proper initialization and scaling we can use root mean square norm and sometimes unscaled L2 norm with no weight learning. This results in faster learning with no downsides.
 #### Attention Sublayer Gating [citation](https://arxiv.org/abs/1804.03999v3)
 A learned gate is added to the final output of the attention sublayer.
@@ -135,14 +143,15 @@ We allow values to be larger than keys and queries. This lets the network "think
 We normalize each head of the attention computation output separately using RMSNorm to form a kind of group norm by head.
 #### Time Lerp [citation](https://arxiv.org/abs/2305.13048)
 Instead of using the token embedding at a specific sequence position, we use a mix of it with the sequentially prior embedding. This costs very little but dramatically improves network performance.
-#### Specialized Feed Forward Network [citation](https://arxiv.org/abs/2305.13048)
-We adopt most of the practices from the RWKV channel mix feed forward network. This includes Time Lerp, which is used in our feed forward network as well as other places.
+#### Specialized Feed Forward Network [citation](https://arxiv.org/abs/2305.13048) [citation](https://arxiv.org/abs/2002.05202) [citation](https://arxiv.org/abs/2109.08668)
+We adopt most of the practices from the RWKV channel mix feed forward network. This includes Time Lerp, which is used in our feed forward network as well as other places, and specialized gating.
 #### Residual Mixing [self-citation](https://github.com/SmerkyG/gptcore)
 Sublayers (attention and feed forward) are mixed together with the residual using a specific kind of learned ratio. We find this has slightly better results and costs very little to evaluate.
+#### No bias [citation](https://arxiv.org/abs/2212.14034)
+Only weights, and no bias is used throughout the model
 
 ## Roadmap
 
-- modular metrics
 - colab notebook so anyone can easily try GPT Core
 - documentation on components
 - documentation on dataset collation etc.
@@ -157,6 +166,6 @@ Sublayers (attention and feed forward) are mixed together with the residual usin
 - testing apparatus (BLEU score etc.)
 
 #### Possible future additions to GPT Alpha:
-- grouped query attention
+- grouped query attention https://arxiv.org/abs/2305.13245
 - MixCE
 - MoE
