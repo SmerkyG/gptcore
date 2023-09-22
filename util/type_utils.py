@@ -27,11 +27,11 @@ import collections
 #     return required_type(**args_merged)
 
 def type_name(t):
-    if type(t) != type:
+    if type(t) != type and not callable(t):
         return str(t)
     origin = typing.get_origin(t)
     if origin is None:
-        return ((t.__module__ + '.') if t.__module__ != 'builtins' else '') + t.__name__
+        return ((t.__module__ + '.') if t.__module__ != 'builtins' else '') + t.__qualname__
     else:
         rv = type_name(origin) + '['
         for arg in typing.get_args(t):
