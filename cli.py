@@ -20,6 +20,8 @@ import scheduler
 
 import metrics
 
+import generator
+
 from dataclasses import dataclass, field
 
 from functools import partial
@@ -91,8 +93,6 @@ def run(command, cfg):
         train_loader : torch.utils.data.DataLoader = cfg.train_dataloader_factory(dataset = train_dataset, collate_fn=collate_target_tokens_offset_by_one)
         val_loader : torch.utils.data.DataLoader = cfg.val_dataloader_factory(dataset = val_dataset, collate_fn=collate_target_tokens_offset_by_one)
 
-
-    if command == 'train':
         model = lit.LightningModel(model_factory=cfg.model_factory, optimizer_factory=cfg.optimizer_factory, loss_fn_factory=cfg.loss_fn_factory, loss_wrapper_factory=cfg.loss_wrapper_factory, metric_factories=cfg.metric_factories, scheduler_config=cfg.scheduler_config)
 
         # test model on one batch first so we get good errors quickly even when compiling or logging into wandb
@@ -136,6 +136,7 @@ def run(command, cfg):
         model.load_state_dict(state_dict)
         model.eval()
         model.to(device)
+        gen = generator.Generator(model)
 
         starter_text = "<|endoftext|>In a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
         #starter_text = starter_text + starter_text
@@ -154,12 +155,12 @@ def run(command, cfg):
         #     print(tokenizer.decode(predicted_labels.squeeze(0).tolist()))
         
 
-        sampler = util.config.sampler_factory()
+        sampler = cfg.sampler_factory()
         print(tokenizer.decode(starter_ids))
         print("...")
         with torch.no_grad():
             with ctx:
-                for tok in model.generate_tokens(x, max_new_tokens, sampler, alpha_frequency = 0.25, alpha_presence = 0.25, alpha_decay = 1.0 / 200):
+                for tok in gen.generate_tokens(x, max_new_tokens, sampler, alpha_frequency = 0.25, alpha_presence = 0.25, alpha_decay = 1.0 / 200):
                     print(tokenizer.decode(tok.item()), end='')
                     #print(decode(y[0].tolist()))
                 print('')

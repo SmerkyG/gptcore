@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 import model
+import model.core
 import sampler
 
 class Generator(nn.Module):
@@ -16,7 +17,7 @@ class Generator(nn.Module):
 
     # call this first, if using encoder-decoder combo
     def encode(self, x : Tensor):
-        return self.encoder(x, None, None)
+        return self.model.encode(x, None, None)
     
     def decode(self, x : Tensor, encoder_output : Tensor = None, recurrent_memory : Optional[list[Tensor]] = None):
         return self.model.decode(x, encoder_output, recurrent_memory)
@@ -24,18 +25,18 @@ class Generator(nn.Module):
     def forward(self, x : Tensor, encoder_output : Tensor = None, recurrent_memory : Optional[list[Tensor]] = None):
         return self.model.forward(x, encoder_output, recurrent_memory)
 
-    def next_token(self, input_tokens : Tensor, sampler = sampler.TopKSampler()):
+    def next_token(self, input_tokens : Tensor, sampler = sampler.TopKPTailFreeSampler()):
         x = self.decode(input_tokens if input_tokens.size(1) <= self.hparams.block_size else input_tokens[..., -self.hparams.block_size:])
         next_token = sampler(x[..., -1, :])
         return next_token, torch.cat((input_tokens, next_token), dim=-1)
 
-    def generate_tokens_simple(self, input_tokens : Tensor, num_outputs : int, sampler = sampler.TopKSampler(), alpha_frequency :float = 0, alpha_presence : float = 0, alpha_decay : float = 0):
+    def generate_tokens_simple(self, input_tokens : Tensor, num_outputs : int, sampler = sampler.TopKPTailFreeSampler()):
         output_tokens = input_tokens
         for _ in range(num_outputs):
             next_token, output_tokens = self.next_token(output_tokens, sampler)
             yield next_token
 
-    def generate_tokens(self, input_tokens : Tensor, num_outputs : int, sampler = sampler.TopKSampler(), alpha_frequency :float = 0, alpha_presence : float = 0, alpha_decay : float = 0):
+    def generate_tokens(self, input_tokens : Tensor, num_outputs : int, sampler = sampler.TopKPTailFreeSampler(), alpha_frequency :float = 0, alpha_presence : float = 0, alpha_decay : float = 0):
         output_tokens = input_tokens
         token_map = dict()
         for _ in range(num_outputs):
@@ -49,7 +50,7 @@ class Generator(nn.Module):
             token_map[next_token] = token_map[next_token] + 1 if next_token in token_map else 1
             yield next_token
 
-    def create_recurrent_memory(self, input_tokens : Optional[Tensor], sampler = sampler.TopKSampler()) -> Tuple[int, Tensor]:
+    def create_recurrent_memory(self, input_tokens : Optional[Tensor], sampler = sampler.TopKPTailFreeSampler()) -> Tuple[int, Tensor]:
         # a recurrent state for each layer, each a single (Q*H, Q*H) tensor representing all the state of all the heads for that layer
         Q = int(self.hparams.d_qk_ratio * self.hparams.d_model / self.hparams.n_head)
         recurrent_memory = [torch.zeros(Q * self.hparams.n_head, Q * self.hparams.n_head).unsqueeze(0).repeat(input_tokens.shape[0], 1, 1) for _ in range(self.hparams.n_layer)]
@@ -63,15 +64,15 @@ class Generator(nn.Module):
             next_token = sampler(x)
         return next_token, recurrent_memory
     
-    def next_token_recurrent(self, latest_x : Tensor, recurrent_memory : Tensor, sampler = sampler.TopKSampler()):
+    def next_token_recurrent(self, latest_x : Tensor, recurrent_memory : Tensor, sampler = sampler.TopKPTailFreeSampler()):
         return sampler(self.decode(latest_x, recurrent_memory))
     
-    def generate_tokens_recurrent(self, next_token : int, recurrent_memory : Tensor, num_outputs, sampler = sampler.TopKSampler()):
+    def generate_tokens_recurrent(self, next_token : int, recurrent_memory : Tensor, num_outputs, sampler = sampler.TopKPTailFreeSampler()):
         for _ in range(num_outputs):
             next_token = self.next_recurrent(next_token, recurrent_memory, sampler)
             yield next_token
 
-    def generate_tokens_recurrent_from_scratch(self, num_outputs : int, sampler = sampler.TopKSampler()):
+    def generate_tokens_recurrent_from_scratch(self, num_outputs : int, sampler = sampler.TopKPTailFreeSampler()):
         next_token, recurrent_memory = self.create_recurrent_memory(input_tokens = None)
         return self.generate_tokens_recurrent(next_token, recurrent_memory, num_outputs, sampler)
 
