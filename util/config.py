@@ -55,6 +55,19 @@ class Factory(typing.Generic[T]):
        
         return self.func_type(*args, **kwargs)
     
+    def toDict(self):
+        def _process(node):
+            match node:
+                case Factory():
+                    return {"class_path":node.func_type, "pos_init_args":_process(node.args), "init_args":_process(node.kwargs)}
+                case list():
+                    return [map(_process, node)]
+                case dict():
+                    return {key : _process(value) for key, value in node.items()}
+                case set():
+                    return set(map(_process, node))
+        return _process(self)
+    
     def __str__(self):
         return self.__repr__()
     def __repr__(self):
