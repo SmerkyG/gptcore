@@ -66,6 +66,10 @@ class Factory(typing.Generic[T]):
                     return {key : _process(value) for key, value in node.items()}
                 case set():
                     return set(map(_process, node))
+                case str():
+                    return shlex.quote(node)
+                case _:
+                    return str(node)
         return _process(self)
     
     def __str__(self):
