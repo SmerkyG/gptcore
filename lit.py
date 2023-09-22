@@ -32,7 +32,7 @@ class LightningModel(LightningModule):
     ) -> None:
         super().__init__()        
         # saving additional 'model_str' and 'optimizers_str' since wandb otherwise won't save the full depth of the serialized config, so you can't look back and see all hyperparameters later
-        self.save_hyperparameters(dict(model=model_factory, optimizer=optimizer_factory, loss_fn=loss_fn_factory, loss_wrapper=loss_wrapper_factory, scheduler=scheduler_config, model_str=str(model_factory), optimizer_str=str(optimizer_factory), loss_fn_str=str(loss_fn_factory), loss_wrapper_str=str(loss_wrapper_factory), scheduler_str=str(scheduler_config)))
+        self.save_hyperparameters(dict(model=model_factory, optimizer=optimizer_factory, loss_fn=loss_fn_factory, loss_wrapper=loss_wrapper_factory, scheduler=scheduler_config, model_dict=Factory.toDict(model_factory), optimizer_dict=Factory.toDict(optimizer_factory), loss_fn_dict=Factory.toDict(loss_fn_factory), loss_wrapper_dict=Factory.toDict(loss_wrapper_factory), scheduler_dict=Factory.toDict(scheduler_config), model_str=str(model_factory), optimizer_str=str(optimizer_factory), loss_fn_str=str(loss_fn_factory), loss_wrapper_str=str(loss_wrapper_factory), scheduler_str=str(scheduler_config)))
         #self.logger.experiment.config.update(dict(model=model_factory, optimizers=optimizers_factory))
         self.model = model_factory()
         self.optimizer_factory = optimizer_factory

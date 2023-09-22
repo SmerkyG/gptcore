@@ -56,12 +56,17 @@ class Factory(typing.Generic[T]):
         return self.func_type(*args, **kwargs)
     
     def toDict(self):
+        if self is None:
+            return None
         def _process(node):
             match node:
                 case Factory():
-                    return {"class_path":node.func_type, "pos_init_args":_process(node.args), "init_args":_process(node.kwargs)}
+                    rv = {"class_path":type_name(node.func_type)}
+                    if len(node.args) > 0: rv["pos_init_args"] = _process(node.args)
+                    if len(node.kwargs) > 0: rv["init_args"] = _process(node.kwargs)
+                    return rv
                 case list():
-                    return [map(_process, node)]
+                    return list(map(_process, node))
                 case dict():
                     return {key : _process(value) for key, value in node.items()}
                 case set():
@@ -75,7 +80,7 @@ class Factory(typing.Generic[T]):
     def __str__(self):
         return self.__repr__()
     def __repr__(self):
-        rv = f"{type(self).__name__}({self.func_type}"
+        rv = f"{type(self).__name__}({type_name(self.func_type)}"
         argstr = ','.join(['{!r}'.format(v) for v in self.args])
         if len(argstr) > 0:
             rv += ', ' + argstr
