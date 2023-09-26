@@ -4,7 +4,7 @@ import abc
 
 from util.config import Factory
 
-from typing import Any, Optional, Tuple, List, Iterable, Callable
+from typing import Callable, Any, Optional, Tuple, List, Iterable
 from collections import OrderedDict
 import math
 import torch
@@ -21,6 +21,8 @@ from dataclasses import dataclass
 import model.interface
 
 from model.hparams import HParams
+
+import cfgctx
 
 #import torch._dynamo
 
@@ -40,10 +42,15 @@ class IAttention():
     @abc.abstractmethod
     def forward(self, q:Tensor, k:Tensor, v:Tensor, recurrent_memory : Optional[Tensor] = None):
         raise NotImplementedError
+    
+    @abc.abstractmethod
+    def __call__(self, q:Tensor, k:Tensor, v:Tensor, recurrent_memory : Optional[Tensor] = None):
+        raise NotImplementedError
+        
 
 class Attention(nn.Module, IAttention):
     # vanilla attention
-    def __init__(self, hparams : HParams, layer_id : int, bias_mask_factory : Factory[mask.IBiasMask] = Factory(mask.CausalBiasMask)): 
+    def __init__(self, hparams : HParams, layer_id : int, bias_mask_factory : Callable[..., mask.IBiasMask] = Factory(mask.CausalBiasMask)): 
         super().__init__(hparams, layer_id)
         assert(layer_id >= 0)
         self.hparams = hparams
@@ -54,7 +61,7 @@ class Attention(nn.Module, IAttention):
 
 class LinearAttention(nn.Module, IAttention):
     # unscaled softmax-free attention (unscaled because we're presuming norm will be taken afterwards)
-    def __init__(self, hparams : HParams, layer_id : int, mul_mask_factory : Factory[mask.IMulMask] = Factory(mask.CausalMulMask)):
+    def __init__(self, hparams : HParams, layer_id : int, mul_mask_factory : Callable[..., mask.IMulMask] = Factory(mask.CausalMulMask)):
         super().__init__(hparams, layer_id)
         assert(layer_id >= 0)
         T = hparams.block_size
@@ -65,7 +72,7 @@ class LinearAttention(nn.Module, IAttention):
 
 class TorchAttention(nn.Module, IAttention):
     # uses optimized flashattention implementation when possible (as of pytorch2.0.1 this happens only when no mask is specified, but the next version should allow masks too)
-    def __init__(self, hparams : HParams = None, layer_id : int = -1, bias_mask_factory : Optional[Factory[mask.IBiasMask]] = None): 
+    def __init__(self, hparams : HParams, layer_id : int, bias_mask_factory : Callable[..., mask.IBiasMask] | None = None): 
         super().__init__()
         assert(layer_id >= 0)
         self.hparams = hparams
@@ -98,7 +105,7 @@ class ReluSquared(nn.Module):
         return torch.square(torch.relu(x))
 
 class RWKVFeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int, hidden_activation_factory : Factory = Factory(ReluSquared), gate_activation_factory : Factory = Factory(nn.Sigmoid)):
+    def __init__(self, hparams : HParams, layer_id : int, hidden_activation_factory : Callable = Factory(ReluSquared), gate_activation_factory : Callable = Factory(nn.Sigmoid)):
         super().__init__()
         self.layer_id = layer_id        
         D = hparams.d_model
@@ -123,9 +130,9 @@ class RWKVFeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
     
 class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
     def __init__(self, hparams : HParams, layer_id : int, 
-                 attention_factory : Factory = Factory(TorchAttention), 
-                 qkv_norm_factory : Factory = Factory(norm.RMSNorm, weight_scaling=False), 
-                 time_mixer_factory = Factory(TimeLerp)):
+                 attention_factory : Callable[..., IAttention] = Factory(TorchAttention), 
+                 qkv_norm_factory : Callable = Factory(norm.RMSNorm, weight_scaling=False), 
+                 time_mixer_factory : Callable = Factory(TimeLerp)):
         super().__init__()
         assert hparams.d_model % hparams.n_head == 0
         self.hparams = hparams
@@ -212,10 +219,12 @@ class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
 class IResidualOp():
     @abc.abstractmethod
     def forward(self, x : Tensor, sublayer, layer_recurrent_memory : Optional[Tensor] = None):
+        raise NotImplementedError    
+    def __call__(self, x : Tensor, sublayer, layer_recurrent_memory : Optional[Tensor] = None):
         raise NotImplementedError
 
 class ResidualAddOp(nn.Module, IResidualOp):
-    def __init__(self, hparams : HParams, layer_id : int, sublayer_norm_factory : Factory = Factory(norm.RMSNorm, weight_scaling = False)):
+    def __init__(self, hparams : HParams, layer_id : int, sublayer_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling = False)):
         super().__init__()
         self.dropout = nn.Dropout(hparams.dropout)
         self.norm = sublayer_norm_factory(hparams.d_model)
@@ -224,7 +233,7 @@ class ResidualAddOp(nn.Module, IResidualOp):
         return x + self.dropout(sublayer(self.norm(x)))
 
 class ResidualMixOp(nn.Module, IResidualOp):
-    def __init__(self, hparams : HParams, layer_id : int, sublayer_norm_factory : Factory = Factory(norm.RMSNorm, weight_scaling = False)):
+    def __init__(self, hparams : HParams, layer_id : int, sublayer_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling = False)):
         super().__init__()
         self.dropout = nn.Dropout(hparams.dropout)
         self.norm = sublayer_norm_factory(hparams.d_model)
@@ -234,7 +243,7 @@ class ResidualMixOp(nn.Module, IResidualOp):
         return x * self.residual_mix + self.dropout(sublayer(self.norm(x))) * (2 - self.residual_mix)
 
 class TransformerLayer(nn.Module):
-    def __init__(self, hparams : HParams, layer_id : int, residual_op_factory : Factory[IResidualOp] = Factory(ResidualMixOp, sublayer_norm_factory = Factory(norm.RMSNorm, weight_scaling = False))):
+    def __init__(self, hparams : HParams, layer_id : int, residual_op_factory : Callable[..., IResidualOp] = Factory(ResidualMixOp, sublayer_norm_factory = Factory(norm.RMSNorm, weight_scaling = False))):
         super().__init__()
         self.self_attention_sublayer = hparams.self_attention_sublayer_factory(hparams, layer_id)
         self.self_attention_resop = residual_op_factory(hparams, layer_id)
@@ -245,7 +254,7 @@ class TransformerLayer(nn.Module):
         self.feedforward_sublayer = hparams.feedforward_sublayer_factory(hparams, layer_id)
         self.feedforward_resop = residual_op_factory(hparams, layer_id)
 
-    def forward(self, x : Tensor, encoder_output : Tensor = None, layer_recurrent_memory : Optional[Tensor] = None):
+    def forward(self, x : Tensor, encoder_output : Tensor | None = None, layer_recurrent_memory : Optional[Tensor] = None):
         # self attention (query, key, and value are all based on the same inputs)
         self_attn = lambda y: self.self_attention_sublayer(y, y, y, layer_recurrent_memory)
         x = self.self_attention_resop(x, self_attn) # this code looks a little complicated, but it's just allowing us to swap out whether we add or mix the residual
@@ -271,11 +280,11 @@ class Unembedding(nn.Module):
 
 class Transformer(nn.Module):
     def __init__(self, hparams : HParams, 
-                 embedding_norm_factory : Factory = Factory(norm.RMSNorm, weight_scaling=False), 
-                 positional_embedding_factory : Factory = Factory(NoOpModule),
-                 transformer_layer_factory : Factory = Factory(TransformerLayer),
+                 embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False), 
+                 positional_embedding_factory : Callable[..., nn.Module] = Factory(NoOpModule),
+                 transformer_layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
-                 final_norm_factory : Factory = Factory(norm.RMSNorm, weight_scaling=False),
+                 final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
                  is_decoder : bool = True,
                  unembed_output : bool = True):
         super().__init__()
@@ -300,7 +309,7 @@ class Transformer(nn.Module):
         # FIXME - improve weight initialization somehow so it's not external to all the classes
         self._init_weights()
 
-    def forward(self, x : Tensor, encoder_output : Tensor = None, recurrent_memory : Optional[list[Tensor]] = None):
+    def forward(self, x : Tensor, encoder_output : Tensor | None = None, recurrent_memory : Optional[list[Tensor]] = None):
         # convert from input token index to first layer embedding via embedding map
         x = self.embed(x)
         # this extra normalization right after getting the embedding is an improvement from RWKV SmallInit
@@ -345,6 +354,7 @@ class IEncoderDecoder():
 
 class Encoder(Transformer, IEncoderDecoder):
     def __init__(self, hparams : HParams):
+        hparams.block_size = cfgctx.block_size
         super().__init__(hparams, is_decoder=False, unembed_output=True)
 
     def encode(self, x : Tensor):
@@ -352,9 +362,10 @@ class Encoder(Transformer, IEncoderDecoder):
 
 class Decoder(Transformer, IEncoderDecoder):
     def __init__(self, hparams : HParams):
+        hparams.block_size = cfgctx.block_size
         super().__init__(hparams, is_decoder=True, unembed_output=True)
 
-    def decode(self, x : Tensor, encoder_output : Tensor = None, recurrent_memory : Optional[list[Tensor]] = None):
+    def decode(self, x : Tensor, encoder_output : Tensor | None = None, recurrent_memory : Optional[list[Tensor]] = None):
         return self.forward(x, encoder_output, recurrent_memory)
 
 class EncoderDecoder(nn.Module, IEncoderDecoder):
@@ -372,7 +383,7 @@ class EncoderDecoder(nn.Module, IEncoderDecoder):
     def encode(self, x : Tensor):
         return self.encoder(x)
 
-    def decode(self, x : Tensor, encoder_output : Tensor = None, recurrent_memory : Optional[list[Tensor]] = None):
+    def decode(self, x : Tensor, encoder_output : Tensor | None = None, recurrent_memory : Optional[list[Tensor]] = None):
         return self.decoder(x, encoder_output, recurrent_memory)
 
 

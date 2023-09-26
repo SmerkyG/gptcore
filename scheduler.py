@@ -4,9 +4,11 @@ from dataclasses import dataclass
 
 from util.config import Factory
 
+from typing import Callable, Any, Optional, Tuple, List, Iterable
+
 @dataclass
 class LRSchedulerConfig:
-    scheduler_factory : Factory[torch.optim.lr_scheduler.LRScheduler]
+    scheduler_factory : Callable[..., torch.optim.lr_scheduler.LRScheduler]
     interval:str = "epoch"
     frequency:int = 1
     monitor:str = "val/loss"

@@ -13,9 +13,15 @@ import scheduler
 
 import metrics
 
+import model.core
+
 from lightning import LightningModule
 
 from util.config import Factory
+
+from dataclasses import dataclass
+
+from typing import Callable, Any
 
 def console_clear_last_line():
     print('\033[1A', end='\x1b[2K')
@@ -23,32 +29,33 @@ def console_clear_last_line():
 class LightningModel(LightningModule):
     def __init__(
         self,
-        model_factory : Factory[nn.Module],
-        optimizer_factory : Factory[torch.optim.Optimizer|None],
-        loss_fn_factory : Factory[nn.Module],
-        loss_wrapper_factory : Factory = Factory(),
-        metric_factories : dict[Factory[metrics.IMetric]] = {'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)},
+        model_factory : Callable[..., nn.Module] = Factory(model.core.Decoder),
+        optimizer_factory : Callable[..., torch.optim.Optimizer|None] = Factory(),
+        loss_fn_factory : Callable[..., nn.Module] = Factory(torch.nn.CrossEntropyLoss, ignore_index=-1),
+        loss_wrapper_factory : Callable[..., None] = Factory(),
+        metric_factories : dict[str, Callable[..., metrics.IMetric]] = {'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)},
         scheduler_config : scheduler.LRSchedulerConfig | None = None,
     ) -> None:
         super().__init__()        
         # saving additional 'model_str' and 'optimizers_str' since wandb otherwise won't save the full depth of the serialized config, so you can't look back and see all hyperparameters later
         self.save_hyperparameters(dict(model=model_factory, optimizer=optimizer_factory, loss_fn=loss_fn_factory, loss_wrapper=loss_wrapper_factory, scheduler=scheduler_config, model_dict=Factory.toDict(model_factory), optimizer_dict=Factory.toDict(optimizer_factory), loss_fn_dict=Factory.toDict(loss_fn_factory), loss_wrapper_dict=Factory.toDict(loss_wrapper_factory), scheduler_dict=Factory.toDict(scheduler_config), model_str=str(model_factory), optimizer_str=str(optimizer_factory), loss_fn_str=str(loss_fn_factory), loss_wrapper_str=str(loss_wrapper_factory), scheduler_str=str(scheduler_config)))
         #self.logger.experiment.config.update(dict(model=model_factory, optimizers=optimizers_factory))
+
         self.model = model_factory()
         self.optimizer_factory = optimizer_factory
-        self.scheduler_config = scheduler_config
         self.loss_fn = loss_fn_factory()
         self.loss_wrapper = loss_wrapper_factory()
+        self.metrics = dict()
+        for name, factory in metric_factories.items():
+            self.metrics[name] = factory()
+        self.scheduler_config = scheduler_config
+
         self.tokens_processed = 0
         self.tokens_processed_prev_log = 1
         self.last_iter_time = None
         self.last_log_runtime = 0.0
         self.total_runtime = 0.0
         self.grad_acc_iter = 0
-
-        self.metrics = dict()
-        for name, factory in metric_factories.items():
-            self.metrics[name] = factory()
 
     def on_save_checkpoint(self, checkpoint):
         checkpoint['tokens'] = self.tokens_processed
@@ -61,7 +68,7 @@ class LightningModel(LightningModule):
     def forward(self, x: torch.Tensor, y: Optional[torch.Tensor] = None) -> torch.Tensor:
         return self.model(x)
     
-    def configure_optimizers(self) -> torch.optim.Optimizer:
+    def configure_optimizers(self):
         params = [p for _, p in self.named_parameters() if p.requires_grad]
 
         # if 'weight_decay' in self.optimizers_factory and self.optimizers_factory['weight_decay'] > 0:

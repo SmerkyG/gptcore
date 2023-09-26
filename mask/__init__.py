@@ -18,6 +18,10 @@ class IBiasMask():
     def forward(self, q:Tensor):
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def __call__(self, q:Tensor):
+        raise NotImplementedError
+
 class IMulMask():
     class HParams():
         block_size : int
@@ -25,6 +29,10 @@ class IMulMask():
 
     @abc.abstractmethod
     def forward(self, q:Tensor):
+        raise NotImplementedError
+    
+    @abc.abstractmethod
+    def __call__(self, q:Tensor):
         raise NotImplementedError
 
 def causal_mul_mask(T):

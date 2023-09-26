@@ -17,13 +17,16 @@ from functools import partial
 from posemb.interface import IPositionalEmbedding, IQueryKeyEmbedding
 from model.interface import IFeedForwardSubLayer, IAttentionSubLayer
 
+from typing import Callable, Any
+
 def factory(*args, **kwargs):
     return field(default_factory=partial(Factory, *args, **kwargs))
 
 @dataclass
 class HParams():
+    # FIXME - can we pick up vocab size from tokenizer/dataset?
     vocab_size: int = 50304
-    block_size : int = 256 # FIXME - what if this is different for encoder and decoder?
+    block_size : int = 0 # this gets filled in from Ctx # FIXME - what if this is different for encoder and decoder?
 
     n_layer : int = 12
     n_head : int = 12
@@ -39,12 +42,12 @@ class HParams():
     # dropout is more useful for finetuning than pretraining
     dropout : float = 0.0
 
-    positional_embedding_factory : Factory[IPositionalEmbedding] = factory('model.core.NoOpModule')
-    rotary_positional_embedding_factory : Factory[IQueryKeyEmbedding] = factory('model.core.NoOpModule')
+    positional_embedding_factory : Callable[..., IPositionalEmbedding] = factory('model.core.NoOpModule')
+    rotary_positional_embedding_factory : Callable[..., IQueryKeyEmbedding] = factory('model.core.NoOpModule')
 
-    self_attention_sublayer_factory : Factory[IAttentionSubLayer] = factory('model.core.AttentionSubLayer')
+    self_attention_sublayer_factory : Callable[..., IAttentionSubLayer] = factory('model.core.AttentionSubLayer')
 
-    cross_attention_sublayer_factory : Factory[IAttentionSubLayer] = factory('model.core.NoOpModule')
+    cross_attention_sublayer_factory : Callable[..., IAttentionSubLayer] = factory('model.core.NoOpModule')
 
     feedforward_d_model_ratio : float = 4
-    feedforward_sublayer_factory : Factory[IFeedForwardSubLayer] = factory('model.core.FFN')
+    feedforward_sublayer_factory : Callable[..., IFeedForwardSubLayer] = factory('model.core.FFN')

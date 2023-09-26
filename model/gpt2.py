@@ -1,6 +1,6 @@
 from util.config import Factory
 
-from typing import Any, Optional, Tuple, List, Iterable
+from typing import Callable, Any, Optional, Tuple, List, Iterable
 
 import math
 
@@ -16,7 +16,7 @@ from model.hparams import HParams
 import model.core
 
 class GPT2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int, hidden_activation_factory : Factory = Factory(nn.GELU, approximate='tanh')):
+    def __init__(self, hparams : HParams, layer_id : int, hidden_activation_factory : Callable[..., nn.Module] = Factory(nn.GELU, approximate='tanh')):
         super().__init__()
         d_hidden = int(hparams.d_model * hparams.feedforward_d_model_ratio)
         self.ff_expansion = nn.Linear(hparams.d_model, d_hidden, bias=False)
@@ -32,7 +32,7 @@ class GPT2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
         return x
 
 class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int, attention_factory : Factory = Factory(model.core.TorchAttention)):
+    def __init__(self, hparams : HParams, layer_id : int, attention_factory : Callable[..., model.core.IAttention] = Factory(model.core.TorchAttention)):
         super().__init__()
         self.hparams = hparams
         C = hparams.d_model

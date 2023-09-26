@@ -1,18 +1,84 @@
 import typing
+import types
 import shlex
 import inspect
 import types
+import collections.abc
 
 import pydoc
 
+import builtins
+class MissingType(): pass
+Missing = MissingType()
+# same as pydoc.locate, except this function can tell you if an attribute exists even if it's set to None
+def locate(path, missing_value=None, forceload:bool=False):
+    """Locate an object by name or dotted path, importing as necessary."""
+    parts = [part for part in path.split('.') if part]
+    module, n = None, 0
+    while n < len(parts):
+        nextmodule = pydoc.safeimport('.'.join(parts[:n+1]), forceload)
+        if nextmodule: module, n = nextmodule, n + 1
+        else: break
+    if module:
+        object = module
+    else:
+        object = builtins
+    for part in parts[n:]:
+        try:
+            object = getattr(object, part)
+        except AttributeError:
+            return missing_value
+    return object
+
+
 from util.type_utils import type_name, is_generic_instance
 
-def defer(subnode):
-    return subnode()
-
 T = typing.TypeVar("T")
-class Factory(typing.Generic[T]):
-    def __init__(self, type_or_typename : typing.Union[type, str, None] = None, *args, **kwargs):
+class IPartial(typing.Generic[T]):
+    # FIXME - put replace_with_instance here instead of in each subclass?
+    pass
+
+def recursively_replace_factory_as_needed(c):
+    if isinstance(c, list):
+        for i, v in enumerate(c):
+            c[i] = recursively_replace_factory_as_needed(v)
+    elif isinstance(c, dict):
+        for k, v in c.items():
+            c[k] = recursively_replace_factory_as_needed(v)
+    elif isinstance(c, Factory) and c.replace_with_instance:
+        c = c()
+    elif isinstance(c, MemberAccessor) and c.replace_with_instance:
+        c = c()
+    elif isinstance(c, IdentifierAccessor) and c.replace_with_instance:
+        c = c()
+    return c
+
+def recursively_replace_identifier_accessors_as_needed(c):
+    if isinstance(c, list):
+        for i, v in enumerate(c):
+            c[i] = recursively_replace_identifier_accessors_as_needed(v)
+    elif isinstance(c, dict):
+        for k, v in c.items():
+            c[k] = recursively_replace_identifier_accessors_as_needed(v)
+    elif isinstance(c, Factory):
+        for i, v in enumerate(c.args):
+            c.args[i] = recursively_replace_identifier_accessors_as_needed(v)
+        for k, v in c.kwargs.items():
+            c.kwargs[k] = recursively_replace_identifier_accessors_as_needed(v)
+    elif isinstance(c, MemberAccessor):
+        c.inner_ipartial = recursively_replace_identifier_accessors_as_needed(c.inner_ipartial)
+        for i, v in enumerate(c.args):
+            c.args[i] = recursively_replace_identifier_accessors_as_needed(v)
+        for k, v in c.kwargs.items():
+            c.kwargs[k] = recursively_replace_identifier_accessors_as_needed(v)
+    elif isinstance(c, IdentifierAccessor):
+        #c_old = c
+        c = c()
+        #print(f"Replaced IdentifierAccessor {c_old} with {c}")
+    return c
+
+class Factory(typing.Generic[T], IPartial[T]):
+    def __init__(self, type_or_typename : typing.Union[type, str, None] = None, placeholders={}, *args, **kwargs):
         if isinstance(type_or_typename, str):
             self.func_type = pydoc.locate(type_or_typename)
             if self.func_type is None:
@@ -23,26 +89,17 @@ class Factory(typing.Generic[T]):
         if self.func_type is not None and not callable(self.func_type) and not isinstance(self.func_type, type):
             raise Exception(f"Factory requires a callable function or class but got: {self.func_type}")
 
-        self.args = args
+        self.args = list(args)
         self.kwargs = dict(kwargs)
+        self.placeholders = dict(placeholders)
         self.replace_with_instance = False
 
-    def __call__(self, /, *args, **kwargs):
+    def __call__(self, /, *args, **kwargs) -> T:
         if self.func_type is None:
             return None
 
-        def recursively_replace_factory_as_needed(c):
-            if isinstance(c, list):
-                for i, v in enumerate(c):
-                    c[i] = recursively_replace_factory_as_needed(v)
-            elif isinstance(c, dict):
-                for k, v in c.items():
-                    c[k] = recursively_replace_factory_as_needed(v)
-            elif isinstance(c, Factory) and c.replace_with_instance:
-                c = c()
-            return c
-
         args = [*self.args, *args]
+
         # FIXME - is this the kind of merge we want?
         kwargs = {**self.kwargs, **kwargs}
         #kwargs = dict(self.kwargs)
@@ -97,15 +154,82 @@ class Factory(typing.Generic[T]):
     def __delitem__(self, __key: str) -> None: del self.kwargs[__key]
     # def __iter__(self) -> Iterator[str]: ...
 
+
+class IdentifierAccessor(typing.Generic[T], IPartial[T]):
+    def __init__(self, full_path_to_identifier : str, replace_with_instance:bool = True):
+        #print(f"IdentifierAccessor {full_path_to_identifier}")
+        self.full_path_to_identifier = full_path_to_identifier
+        self.replace_with_instance = replace_with_instance
+
+    def __call__(self) -> typing.Any: # can't know the return type, unfortunately, since it's a string based identifier accessor
+        rv = pydoc.locate(self.full_path_to_identifier)
+        #print(f"Calling IdentifierAccessor {self.full_path_to_identifier} == {rv}")
+        return rv
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self.full_path_to_identifier})"
+
+class MemberAccessor(typing.Generic[T], IPartial[T]):
+    def __init__(self, member_name : str, inner_ipartial : IPartial[T], is_call:bool = False, replace_with_instance:bool = True, placeholders={}, *args, **kwargs):
+        self.inner_ipartial = inner_ipartial
+        self.member_name = member_name
+        self.is_call = is_call
+        self.args = list(args)
+        self.kwargs = dict(kwargs)
+        self.placeholders = dict(placeholders)
+        self.replace_with_instance = replace_with_instance
+
+    def __call__(self, /, *args, **kwargs) -> typing.Any: # can't know the return type, unfortunately, since it's a string based property accessor or member fn invocation
+        #print(f"MEMBERACCESSOR {self.inner_ipartial}", self.is_call, args, self.args, kwargs, self.kwargs)
+
+        args = [*self.args, *args]
+
+        # FIXME - is this the kind of merge we want?
+        kwargs = {**self.kwargs, **kwargs}
+        kwargs = dict(self.kwargs)
+        kwargs.update(kwargs)
+
+        #for i, v in enumerate(args):
+        #    args[i] = recursively_replace_factory_as_needed(v)
+        #for k, v in kwargs.items():
+        #    kwargs[k] = recursively_replace_factory_as_needed(v)
+
+        obj = recursively_replace_factory_as_needed(self.inner_ipartial)
+
+        # must be a property OR could be a weird override like in IterDataPipe - they manually override __getattr__ to return partials corresponding to shuffle, etc.
+        attr = getattr(obj, self.member_name, None)
+        #print(f"MEMBER attr '{self.member_name}' {attr}")
+        if self.is_call:
+            #if not callable(attr):
+            #    raise 
+            attr = attr(*self.args, **self.kwargs)
+            #print(f"CALLABLE CALLED {attr}")
+        else:
+            #print(f"UNCALLABLE {attr}")
+            pass
+        return attr
+
+    def __repr__(self):
+        rv = f"{type(self).__name__}({self.inner_ipartial}, {self.member_name}"
+        if self.is_call:
+            argstr = ','.join(['{!r}'.format(v) for v in self.args])
+            if len(argstr) > 0:
+                rv += ', ' + argstr
+            kwstr = ', '.join(['{}={!r}'.format(k, v) for k, v in self.kwargs.items()])
+            if len(kwstr) > 0:
+                rv += ', ' + kwstr
+        rv += ')'
+        return rv    
+
 import collections
 collections.UserDict
 
-def RFactory(type_or_typename : typing.Union[type, str, None] = None, *args, **kwargs):
+def RFactory(type_or_typename : type | str | None = None, *args, **kwargs):
     rv = Factory(type_or_typename, *args, **kwargs)
     rv.replace_with_instance = True
     return rv
 
-def merge(dst : typing.Union[Factory, dict], src : typing.Union[Factory, dict]):
+def merge(dst : Factory | dict, src : Factory | dict):
     # merge instances of Factory, dict, and list
     if type(src) == type(dst):
         if isinstance(src, Factory):
@@ -122,28 +246,40 @@ def merge(dst : typing.Union[Factory, dict], src : typing.Union[Factory, dict]):
         elif isinstance(src, list):
             dst.clear()
             for i, srcv in enumerate(src):
-                dst[k] = merge(dst[k], srcv)
+                dst[i] = merge(dst[i], srcv)
             return dst
     # otherwise, just copy it
     return src
 
-def typecheck(path : str, self : typing.Any, required_type : type = typing.Any):
+def typecheck(path : str, self : typing.Any, required_type : type = typing.Any, is_replace_with_instance_factory:bool = True):
+    errors = ''
     try:
-        #print(f"typecheck {path}.{parent_key} {required_type}")
-
-        errors = ''
+        # print(f"typecheck {path} {required_type}")
+        if isinstance(required_type, str):
+            # if the required type is a string (which could happen due to weird python pre-declarations that aren't available, and is done in lightning.LightningModule.fit's model parameter type)
+            # then just allow anything through, since we can't realistically type check this
+            required_type = typing.Any
 
         #if type == typing.Any:
         #    return errors
 
-        if not is_generic_instance(self, required_type):
+        if isinstance(self, IdentifierAccessor):
+            # allow IdentifierAccessors through, since they return Any
+            return errors
+
+
+        if not is_generic_instance(self, required_type):           
             if not isinstance(self, Factory):
                 #    print(f"Factory found {v.func_type}")
                 # get_config_func_options(parent_key, value) + \
-                errors += f"Type Mismatch: expected {type_name(required_type)} but got {type_name(type(self))}\n in config setting `{path}` : {type_name(required_type)} = {self}\n"
+                errors += f"Config Type Mismatch: expected {type_name(required_type)} but got {type_name(type(self))}\n in config setting `{path}` : {type_name(required_type)} = {self}\n"
                 return errors
 
         if isinstance(self, Factory):
+            if typing.get_origin(required_type) == collections.abc.Callable and self.replace_with_instance: # wanted a factory but got what is probably a method invocation
+                errors += f"Config Type Mismatch: expected Factory/Callable but got immediate invocation of {type_name(self.func_type)} (did you forget to prefix this with 'lambda:'?)\n in config setting `{path}` : {type_name(required_type)} = {self}\n"
+                return errors
+
             # fill in func_type when Empty but we have a type annotation
             # FIXME - add and check some sort of required superclass too
             if self.func_type == type(None):
@@ -151,12 +287,14 @@ def typecheck(path : str, self : typing.Any, required_type : type = typing.Any):
 
             if isinstance(self.func_type, types.FunctionType):
                 sig = inspect.signature(self.func_type)
+                is_fn = True
             else:
                 sig = inspect.signature(self.func_type.__init__)
+                is_fn = False
 
             for k, p in sig.parameters.items():
                 #if kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD):
-                if k in self.kwargs:
+                if k in self.kwargs or k in self.placeholders:
                     continue
 
                 if p.default is not p.empty:
@@ -164,10 +302,11 @@ def typecheck(path : str, self : typing.Any, required_type : type = typing.Any):
 
                 if p.annotation is p.empty:
                     continue
-                
+
                 # FIXME - had to disable checking for missing config settings, because we purposely pass some manually
-                # if (p.annotation != typing.Any and typing.get_origin(p.annotation) != typing.Optional) and not (typing.get_origin(p.annotation) == typing.Union and len(typing.get_args(p.annotation)) == 2 and typing.get_args(p.annotation)[1]==type(None)):
-                #     return f"Missing config setting `{path}.{k}` : {type_name(p.annotation)}\n"
+                if (p.annotation != typing.Any and typing.get_origin(p.annotation) != typing.Optional):
+                    if not (typing.get_origin(p.annotation) in [typing.Union, types.UnionType] and len(typing.get_args(p.annotation)) == 2 and typing.get_args(p.annotation)[1]==type(None)):
+                        return f"Missing config setting `{path}.{k}` : {type_name(p.annotation)}\n"
 
             # traverse all subelements recursively
             for k, v in self.kwargs.items():
@@ -177,7 +316,7 @@ def typecheck(path : str, self : typing.Any, required_type : type = typing.Any):
                 rt = p.annotation
                 if rt == inspect.Parameter.empty:
                     rt = typing.Any
-                errors += typecheck(path + '.' + k, v, rt)
+                errors += typecheck(path + '.' + k, v, rt, self.replace_with_instance)
 
 
         elif isinstance(self, dict):
@@ -190,7 +329,7 @@ def typecheck(path : str, self : typing.Any, required_type : type = typing.Any):
                 errors += typecheck(f'{path}[{i}]', v2)
 
     except Exception as ex:
-        errors += f'internal config exception at path "{path}": {self} {required_type} {ex}'
+        raise Exception(f'internal config type checking exception at path "{path}": {required_type} {ex}')
 
 
     return errors            
@@ -199,6 +338,9 @@ def typecheck(path : str, self : typing.Any, required_type : type = typing.Any):
 from _ast import *
 import sys
 import ast
+
+class ConfigInstantiationError(Exception):
+    pass
 
 class ConfigParseError(Exception):
     def __init__(self, node, unparsed_input, msg):
@@ -216,6 +358,13 @@ class ConfigParseError(Exception):
             msg += '^'*(end_col_offset - node.col_offset) + '\n'
         super().__init__(msg)
 
+class Identifier():
+    def __init__(self, name):
+        self.name = name
+    def __str__(self):
+        return self.__repr__()
+    def __repr__(self):
+        return f"Identifier('{self.name}')"
 
 class ConfigParser():
     def eval_first_expr(self, unparsed_input : str):
@@ -232,15 +381,17 @@ class ConfigParser():
                             self.imports_map[alias.asname] = alias.name
                 elif isinstance(subnode, ImportFrom):
                     for alias in subnode.names:
-                        self.imports_map[alias.asname if alias.asname is not None else alias.name] = subnode.module + '.' + alias.name
+                        self.imports_map[alias.asname if alias.asname is not None else alias.name] = '.'.join([str(subnode.module), alias.name])
                 elif isinstance(subnode, Expr):
                     node = subnode.value
                     break
         if isinstance(node, Expression):
             node = node.body
-        return self.process(node)
+        return self.process(node, is_expr=True)
 
-    def process(self, node):
+    # FIXME - is_expr is a cheap way to differentiate between attributes that are intended to be parts of function calls and those that are actually evaluated
+    # FIXME - they also allow lambda args to act as placeholders, but really we should keep a set of local identifiers and check against those for real
+    def process(self, node, is_expr=False):
         try:
             match node:
                 case Constant():
@@ -259,65 +410,103 @@ class ConfigParser():
                     if isinstance(node.op, (Add, Sub, Mult, Mod, Div, FloorDiv, Pow, RShift, LShift, BitAnd, BitOr, BitXor, And, Or)):
                         left = self.process(node.left)
                         right = self.process(node.right)
-                        if isinstance(node.op, Add):
-                            return left + right
-                        if isinstance(node.op, Sub):
-                            return left - right
-                        elif isinstance(node.op, Mult):
-                            return left * right
-                        elif isinstance(node.op, Mod):
-                            return left % right
-                        elif isinstance(node.op, Div):
-                            return left / right
-                        elif isinstance(node.op, FloorDiv):
-                            return left // right
-                        elif isinstance(node.op, Pow):
-                            return left ** right
-                        elif isinstance(node.op, RShift):
-                            return left >> right
-                        elif isinstance(node.op, LShift):
-                            return left << right
-                        elif isinstance(node.op, BitAnd):
-                            return left & right
-                        elif isinstance(node.op, BitOr):
-                            return left | right
-                        elif isinstance(node.op, BitXor):
-                            return left ^ right
-                        elif isinstance(node.op, And):
-                            return left and right
-                        elif isinstance(node.op, Or):
-                            return left or right
-                        raise Exception(f"binary operations allowed only on numeric constants")
+                        # FIXME - check that left and right are both numeric or boolean (or string for +) instead of letting it cause an exception
+                        match node.op:
+                            case Add():
+                                return left + right
+                            case Sub():
+                                return left - right
+                            case Mult():
+                                return left * right
+                            case Mod():
+                                return left % right
+                            case Div():
+                                return left / right
+                            case FloorDiv():
+                                return left // right
+                            case Pow():
+                                return left ** right
+                            case RShift():
+                                return left >> right
+                            case LShift():
+                                return left << right
+                            case BitAnd():
+                                return left & right
+                            case BitOr():
+                                return left | right
+                            case BitXor():
+                                return left ^ right
+                            case And():
+                                return left and right
+                            case Or():
+                                return left or right
+                    raise ConfigParseError(node, self.unparsed_input, msg = 'unsupported binary operation')
                 case UnaryOp():
                     if isinstance(node.op, (Invert, Not, UAdd, USub)):
                         operand = self.process(node.operand)
-                        if isinstance(node.op, Invert):
-                            return ~operand
-                        elif isinstance(node.op, Not):
-                            return not operand
-                        elif isinstance(node.op, UAdd):
-                            return +operand
-                        elif isinstance(node.op, USub):
-                            return -operand
+                        match(node.op):
+                            case Invert():
+                                return ~operand
+                            case Not():
+                                return not operand
+                            case UAdd():
+                                return +operand
+                            case USub():
+                                return -operand
+                    raise ConfigParseError(node, self.unparsed_input, msg = 'unsupported unary operation')
                 case Attribute():
-                    id = self.process(node.value) + '.' + str(node.attr)
-                    return self.imports_map[id] if id in self.imports_map else id
+                    value = self.process(node.value)
+                    if not isinstance(value, Identifier):
+                        #print(value)
+                        #print(ast.dump(node))
+                        return MemberAccessor(member_name=node.attr, inner_ipartial=value, is_call=False, replace_with_instance=True)
+                        #raise ConfigParseError(node, self.unparsed_input, 'configuration files do not support member access (neither properties nor functions)')
+                    id = value.name + '.' + str(node.attr)
+                    fullid = self.imports_map[id] if id in self.imports_map else id
+
+                    if is_expr:
+                        located = locate(fullid, Missing)
+                        if located is Missing:
+                            raise ConfigParseError(node, self.unparsed_input, f"could not locate identifier '{id}'")
+                        return IdentifierAccessor(fullid)
+                        
+                    return Identifier(fullid)
                 case Name():
                     id = node.id
-                    rv = self.imports_map[id] if id in self.imports_map else id
-                    return rv
+                    fullid = self.imports_map[id] if id in self.imports_map else id
+                    return Identifier(fullid)
                 case Lambda():
-                    if len(node.args.args) > 0 or len(node.args.kwonlyargs) > 0 or not isinstance(node.body, Call) or not isinstance(node.body.func, (Name, Attribute)):
-                        raise Exception('configuration lambda must have zero arguments, and is used to return a Factory')
+                    # FIXME - this next commented line disallows lambda args
+                    #len(node.args.args) > 0 or len(node.args.kwonlyargs) > 0 or 
+                    if not isinstance(node.body, Call) or not isinstance(node.body.func, (Name, Attribute)):
+                        raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must be used to return a Factory or MemberAccessor')
+                        #raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must have zero arguments, and is used to return a Factory')
+                    # FIXME - instead of calling create_factory directly here we could somehow indicate that the result should be replace_with_instance=False and just always process node.body.func
                     node = node.body
-                    rv = self.create_factory(node, *map(self.process, node.args), **{kw.arg:self.process(kw.value) for kw in node.keywords})
+                    if isinstance(node.func, Attribute) and isinstance(node.func.value, Call):
+                        # create MemberAccessor
+                        args, kwargs, placeholders = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
+                        #print("CAPTURING MemberAccess ", node.func.attr, placeholders, args, kwargs)
+                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, replace_with_instance=False, placeholders=placeholders, *args, **kwargs)
+                    else:
+                        # create Factory
+                        rv = self.create_factory(node, node.args, node.keywords, replace_with_instance=False)
                     return rv
                 case Call():
+                    if isinstance(node.func, Attribute) and isinstance(node.func.value, Call):
+                        #print()
+                        #print(ast.dump(node))
+                        #print()
+                        # create MemberAccessor
+                        args, kwargs, placeholders = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
+                        #print("CAPTURING CallMemberAccess ", node.func.attr, placeholders, args, kwargs)
+                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, replace_with_instance=True, placeholders=placeholders, *args, **kwargs)
+
                     if isinstance(node.func, (Name, Attribute)):
-                        id = self.process(node.func)
-                        match id:
+                        ident = self.process(node.func)
+                        match ident.name:
                             case 'str' | 'float' | 'int' | 'bool':
-                                return getattr(sys.modules['builtins'], id)(self.process(node.args[0]))
+                                return getattr(sys.modules['builtins'], ident.name)(self.process(node.args[0]))
                             case 'list':
                                 return list(map(self.process, node.args))
                             case 'set' :
@@ -325,29 +514,62 @@ class ConfigParser():
                             case 'dict':
                                 return {k.arg : self.process(k.value) for k in node.keywords}
                             case 'config.Factory':
-                                return self.create_factory(node.args[0], *map(self.process, node.args[1:]), **{kw.arg:self.process(kw.value) for kw in node.keywords})
+                                return self.create_factory(node.args[0], node.args[1:], node.keywords)
                             case _:
+                                # FIXME - maybe we should disallow non-named arguments and only allow kwargs in configs
                                 # allows UDTs to be created via deferred instantiation
-                                rv = self.create_factory(node, *map(self.process, node.args), **{kw.arg:self.process(kw.value) for kw in node.keywords})
-                                rv.replace_with_instance = True
+                                rv = self.create_factory(node, node.args, node.keywords, replace_with_instance=True)
                                 return rv
+                case _:
+                    raise ConfigParseError(node, self.unparsed_input, f"configs do not support language element '{type_name(type(node))}'")
+
         except ConfigParseError:
             raise
         except Exception as e:
-            raise
+            raise ConfigParseError(node, self.unparsed_input, msg="Internal exception during configuration parsing " + str(e))
         #    raise ConfigParseError(node, self.unparsed_input, "") from e
         raise ConfigParseError(node, self.unparsed_input, msg = 'unsupported language element')
+    
+    def process_args_and_keywords(self, node_args, node_keywords):
+        args = list([self.process(a, is_expr=True) for a in node_args])
 
-    def create_factory(self, node, *args, **kwargs):
+        kwargs = {}
+        placeholders = {}
+        for kw in node_keywords:
+            if kw.arg is None:
+                raise ConfigParseError(kw, self.unparsed_input, f"dictionary expansions '**' not allowed in config")
+            if str(kw.arg) == 'self':
+                raise ConfigParseError(kw, self.unparsed_input, f"may not pass self as an argument in configs")
+            value = self.process(kw.value, is_expr=True)
+
+            # remove placeholder identifiers so they don't cause a collision
+            if isinstance(value, Identifier):
+                placeholders[kw.arg] = value
+            else:
+                kwargs[kw.arg] = value
+        
+        return args, kwargs, placeholders
+
+    def create_factory(self, node, node_args, node_keywords, replace_with_instance:bool):
         func_node = node.func
-        func_name = self.process(func_node)
+        func_ident = self.process(func_node)
+        if not isinstance(func_ident, Identifier):
+            raise ConfigParseError(func_node, self.unparsed_input, msg = f'huh got unexpected identifier {func_ident}')
+        func_name = func_ident.name
+
         func_type = pydoc.locate(func_name)
         if func_type is None:
             raise ConfigParseError(node, self.unparsed_input, f"No such class or function found {func_name} while constructing Factory (are you missing the module name or import?)")
         if not callable(func_type) and not isinstance(func_type, type):
             raise ConfigParseError(node, self.unparsed_input, f"Factory requires a callable function or class but got: {func_name}")
+
+        args, kwargs, placeholders = self.process_args_and_keywords(node_args=node_args, node_keywords=node_keywords)
+        if func_name == "dataset.tokenizer.tokenize_join_and_slice":
+            print("dataset.tokenizer.tokenize_join_and_slice", "args", args, "kwargs", kwargs, "placeholders", placeholders)
+
         try:
-            rv = Factory(func_type, *args, **kwargs)
+            rv = Factory(func_type, placeholders, *args, **kwargs)
+            rv.replace_with_instance = replace_with_instance
         except Exception as e:
             raise ConfigParseError(node, self.unparsed_input, str(e)) from None
         return rv

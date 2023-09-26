@@ -1,6 +1,7 @@
 from pydoc import locate
 
 import typing
+import types
 import inspect
 import collections
 
@@ -49,7 +50,7 @@ def is_generic_instance(a, b):
     match b_origin := typing.get_origin(b):
         #case typing.Optional: # seems that we don't need this case bc Python implements Optional as Union[T, type(None)]
         #    return is_generic_instance(a, typing.get_args(b)[0])
-        case typing.Union:
+        case typing.Union | types.UnionType:
             for arg in typing.get_args(b):
                 if is_generic_instance(a, arg):
                     return True
