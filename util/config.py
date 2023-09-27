@@ -156,18 +156,18 @@ class Factory(typing.Generic[T], IPartial[T]):
 
 
 class IdentifierAccessor(typing.Generic[T], IPartial[T]):
-    def __init__(self, full_path_to_identifier : str, replace_with_instance:bool = True):
-        #print(f"IdentifierAccessor {full_path_to_identifier}")
-        self.full_path_to_identifier = full_path_to_identifier
+    def __init__(self, fullid : str, replace_with_instance:bool = True):
+        #print(f"IdentifierAccessor {fullid}")
+        self.fullid = fullid
         self.replace_with_instance = replace_with_instance
 
     def __call__(self) -> typing.Any: # can't know the return type, unfortunately, since it's a string based identifier accessor
-        rv = pydoc.locate(self.full_path_to_identifier)
-        #print(f"Calling IdentifierAccessor {self.full_path_to_identifier} == {rv}")
+        rv = pydoc.locate(self.fullid)
+        #print(f"Calling IdentifierAccessor {self.fullid} == {rv}")
         return rv
 
     def __repr__(self):
-        return f"{type(self).__name__}({self.full_path_to_identifier})"
+        return f"{type(self).__name__}({self.fullid})"
 
 class MemberAccessor(typing.Generic[T], IPartial[T]):
     def __init__(self, member_name : str, inner_ipartial : IPartial[T], is_call:bool = False, replace_with_instance:bool = True, placeholders={}, *args, **kwargs):
@@ -358,13 +358,13 @@ class ConfigParseError(Exception):
             msg += '^'*(end_col_offset - node.col_offset) + '\n'
         super().__init__(msg)
 
-class Identifier():
+class LocalIdentifier():
     def __init__(self, name):
         self.name = name
     def __str__(self):
         return self.__repr__()
     def __repr__(self):
-        return f"Identifier('{self.name}')"
+        return f"LocalIdentifier('{self.name}')"
 
 class ConfigParser():
     def eval_first_expr(self, unparsed_input : str):
@@ -387,11 +387,10 @@ class ConfigParser():
                     break
         if isinstance(node, Expression):
             node = node.body
-        return self.process(node, is_expr=True)
+        self.locals = {}
+        return self.process(node)
 
-    # FIXME - is_expr is a cheap way to differentiate between attributes that are intended to be parts of function calls and those that are actually evaluated
-    # FIXME - they also allow lambda args to act as placeholders, but really we should keep a set of local identifiers and check against those for real
-    def process(self, node, is_expr=False):
+    def process(self, node):
         try:
             match node:
                 case Constant():
@@ -456,28 +455,35 @@ class ConfigParser():
                     raise ConfigParseError(node, self.unparsed_input, msg = 'unsupported unary operation')
                 case Attribute():
                     value = self.process(node.value)
-                    if not isinstance(value, Identifier):
+                    if not isinstance(value, IdentifierAccessor):
                         #print(value)
                         #print(ast.dump(node))
                         return MemberAccessor(member_name=node.attr, inner_ipartial=value, is_call=False, replace_with_instance=True)
                         #raise ConfigParseError(node, self.unparsed_input, 'configuration files do not support member access (neither properties nor functions)')
-                    id = value.name + '.' + str(node.attr)
+                    id = value.fullid + '.' + str(node.attr)
                     fullid = self.imports_map[id] if id in self.imports_map else id
 
-                    if is_expr:
-                        located = locate(fullid, Missing)
-                        if located is Missing:
-                            raise ConfigParseError(node, self.unparsed_input, f"could not locate identifier '{id}'")
-                        return IdentifierAccessor(fullid)
-                        
-                    return Identifier(fullid)
+                    located = locate(fullid, Missing)
+                    if located is Missing:
+                        raise ConfigParseError(node, self.unparsed_input, f"could not locate identifier '{id}'")
+                    return IdentifierAccessor(fullid)
                 case Name():
                     id = node.id
+
+                    # check if it's a local
+                    if id in self.locals:
+                        return LocalIdentifier(id)
+
                     fullid = self.imports_map[id] if id in self.imports_map else id
-                    return Identifier(fullid)
+                    return IdentifierAccessor(fullid)
                 case Lambda():
+                    locals_tmp = self.locals
                     # FIXME - this next commented line disallows lambda args
-                    #len(node.args.args) > 0 or len(node.args.kwonlyargs) > 0 or 
+                    # if len(node.args.posonlyargs) > 0 or len(node.args.args) > 0 or len(node.args.kwonlyargs) > 0:                    
+                    if len(node.args.args) > 0:
+                        self.locals = self.locals.copy()
+                        for arg in node.args.args: self.locals[arg.arg] = True
+
                     if not isinstance(node.body, Call) or not isinstance(node.body.func, (Name, Attribute)):
                         raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must be used to return a Factory or MemberAccessor')
                         #raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must have zero arguments, and is used to return a Factory')
@@ -491,6 +497,8 @@ class ConfigParser():
                     else:
                         # create Factory
                         rv = self.create_factory(node, node.args, node.keywords, replace_with_instance=False)
+
+                    self.locals = locals_tmp
                     return rv
                 case Call():
                     if isinstance(node.func, Attribute) and isinstance(node.func.value, Call):
@@ -504,7 +512,7 @@ class ConfigParser():
 
                     if isinstance(node.func, (Name, Attribute)):
                         ident = self.process(node.func)
-                        match ident.name:
+                        match ident.fullid:
                             case 'str' | 'float' | 'int' | 'bool':
                                 return getattr(sys.modules['builtins'], ident.name)(self.process(node.args[0]))
                             case 'list':
@@ -531,7 +539,7 @@ class ConfigParser():
         raise ConfigParseError(node, self.unparsed_input, msg = 'unsupported language element')
     
     def process_args_and_keywords(self, node_args, node_keywords):
-        args = list([self.process(a, is_expr=True) for a in node_args])
+        args = list([self.process(a) for a in node_args])
 
         kwargs = {}
         placeholders = {}
@@ -540,10 +548,10 @@ class ConfigParser():
                 raise ConfigParseError(kw, self.unparsed_input, f"dictionary expansions '**' not allowed in config")
             if str(kw.arg) == 'self':
                 raise ConfigParseError(kw, self.unparsed_input, f"may not pass self as an argument in configs")
-            value = self.process(kw.value, is_expr=True)
+            value = self.process(kw.value)
 
             # remove placeholder identifiers so they don't cause a collision
-            if isinstance(value, Identifier):
+            if isinstance(value, LocalIdentifier):
                 placeholders[kw.arg] = value
             else:
                 kwargs[kw.arg] = value
@@ -553,9 +561,9 @@ class ConfigParser():
     def create_factory(self, node, node_args, node_keywords, replace_with_instance:bool):
         func_node = node.func
         func_ident = self.process(func_node)
-        if not isinstance(func_ident, Identifier):
+        if not isinstance(func_ident, IdentifierAccessor):
             raise ConfigParseError(func_node, self.unparsed_input, msg = f'huh got unexpected identifier {func_ident}')
-        func_name = func_ident.name
+        func_name = func_ident.fullid
 
         func_type = pydoc.locate(func_name)
         if func_type is None:
