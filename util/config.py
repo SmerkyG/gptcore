@@ -268,21 +268,23 @@ def typecheck(path : str, obj : typing.Any, required_type : type = typing.Any, i
                 sig = inspect.signature(obj.func_type.__init__)
                 is_fn = False
 
-            for k, p in sig.parameters.items():
-                #if kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD):
-                if k in obj.kwargs or k in obj.placeholders:
-                    continue
+            # check for missing arguments only if there's no dictionary expansion present
+            if "**" not in obj.placeholders:
+                for k, p in sig.parameters.items():
+                    #if kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD):
+                    if k in obj.kwargs or k in obj.placeholders:
+                        continue
 
-                if p.default is not p.empty:
-                    continue
+                    if p.default is not p.empty:
+                        continue
 
-                if p.annotation is p.empty:
-                    continue
+                    if p.annotation is p.empty:
+                        continue
 
-                # FIXME - had to disable checking for missing config settings, because we purposely pass some manually
-                if (p.annotation != typing.Any and typing.get_origin(p.annotation) != typing.Optional):
-                    if not (typing.get_origin(p.annotation) in [typing.Union, types.UnionType] and len(typing.get_args(p.annotation)) == 2 and typing.get_args(p.annotation)[1]==type(None)):
-                        return f"Missing config setting `{path}.{k}` : {type_name(p.annotation)}\n"
+                    # FIXME - had to disable checking for missing config settings, because we purposely pass some manually
+                    if (p.annotation != typing.Any and typing.get_origin(p.annotation) != typing.Optional):
+                        if not (typing.get_origin(p.annotation) in [typing.Union, types.UnionType] and len(typing.get_args(p.annotation)) == 2 and typing.get_args(p.annotation)[1]==type(None)):
+                            return f"Missing config setting `{path}.{k}` : {type_name(p.annotation)}\n"
 
             # traverse all subelements recursively
             for k, v in obj.kwargs.items():
@@ -460,6 +462,11 @@ class ConfigParser():
                         self.locals = self.locals.copy()
                         for arg in node.args.args: self.locals[arg.arg] = True
 
+                    # allows dictionary expansion args like **kwarg
+                    if node.args.kwarg is not None:
+                        self.locals = self.locals.copy()
+                        self.locals[node.args.kwarg.arg] = True
+
                     if not isinstance(node.body, Call) or not isinstance(node.body.func, (Name, Attribute)):
                         raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must be used to return a Factory or MemberAccessor')
                         #raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must have zero arguments, and is used to return a Factory')
@@ -529,18 +536,23 @@ class ConfigParser():
         kwargs = {}
         placeholders = {}
         for kw in node_keywords:
-            if kw.arg is None:
-                raise ConfigParseError(kw, self.unparsed_input, f"dictionary expansions '**' not allowed in config")
+            #if kw.arg is None:
+                #print(ast.dump(kw.value))
+                #raise ConfigParseError(kw, self.unparsed_input, f"dictionary expansions '**' not allowed in config")
             if str(kw.arg) == 'self':
                 raise ConfigParseError(kw, self.unparsed_input, f"may not pass self as an argument in configs")
             value = self.process(kw.value)
 
             # remove placeholder identifiers so they don't cause a collision
             if isinstance(value, LocalIdentifier):
+                if kw.arg is None:
+                    # was a dictonary expansion, so add special value into placeholders to signify that
+                    placeholders["**"] = "**"
+                else:
                 # for now, disallow remapping of names from lambda input args to factory kwargs
-                if value.name != str(kw.arg):
-                    raise ConfigParseError(kw, self.unparsed_input, f"in configs, lambda local identifiers may only be passed to keyword arguments of the same name. Found mismatched: {kw.arg}={value.name}")
-                placeholders[kw.arg] = value
+                    if value.name != str(kw.arg):
+                        raise ConfigParseError(kw, self.unparsed_input, f"in configs, lambda local identifiers may only be passed to keyword arguments of the same name. Found mismatched: {kw.arg}={value.name}")
+                    placeholders[kw.arg] = value
             else:
                 kwargs[kw.arg] = value
         
