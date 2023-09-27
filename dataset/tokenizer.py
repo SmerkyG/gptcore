@@ -36,8 +36,6 @@ def tokenize_join_and_slice(input_batch : list[dict], tokenizer, block_size):
     #return dict(input_ids=input_ids)
 
 def tokenize_join_and_slice_in_context(input_batch : list[dict]):
-    print(f"cfgctx.block_size = {cfgctx.block_size}")
-    print(f"cfgctx.tokenizer = {cfgctx.tokenizer}")
     if input_batch is None:
         return None
     return tokenize_join_and_slice(input_batch, cfgctx.tokenizer, cfgctx.block_size)

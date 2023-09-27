@@ -8,7 +8,7 @@ import torch.backends.cudnn
 import torch.utils.data.dataset
 import lightning
 import util.config
-from util.config import Factory, RFactory
+from util.config import Factory
 import lit
 from dataclasses import dataclass
 import util.logger
@@ -37,8 +37,6 @@ import dataclasses
 
 def factory(*args, **kwargs):
     return field(default_factory=partial(Factory, *args, **kwargs))
-def rfactory(*args, **kwargs):
-    return field(default_factory=partial(RFactory, *args, **kwargs))
 
 
 @dataclass
@@ -68,8 +66,6 @@ def collate_target_tokens_offset_by_one(batch):
     values = torch.utils.data.default_collate(batch)
     return values[..., :-1], values[..., 1:]
 
-import pydoc
-import datasets
 import dataset
 
 def run(command, cfg : Config):
@@ -84,32 +80,13 @@ def run(command, cfg : Config):
     cfgctx.batch_size = cfg.batch_size
     cfgctx.block_size = cfg.block_size
     cfgctx.tokenizer = cfg.tokenizer_factory()
-    print(f"cfgctx.block_size = {cfgctx.block_size}")
-    print(f"cfgctx.tokenizer = {cfgctx.tokenizer}")
 
     # NOTE - we have to replace identifier accessors here, because if dataloader forks new processes, then
     #  those won't be able to access the values from the loaded cfgctx module unless they're materialized in advance here
-    print(f"Replacing identifier accessors...")
     for field in dataclasses.fields(cfg):
-        setattr(cfg, field.name, util.config.recursively_replace_identifier_accessors_as_needed(getattr(cfg, field.name)))
-    print(f"Done!")
+        setattr(cfg, field.name, util.config.recursively_replace_identifier_accessors(getattr(cfg, field.name)))
 
     log_always("config:" + "\n" + str(cfg) + "\n")
-
-    # ds = dataset.PipedDatasetWrapper(dataset=datasets.load_dataset(path='dataset/pile.py', streaming=True, split='train')).map_batches(
-    #     Factory(dataset.tokenizer.tokenize_join_and_slice, tokenizer=cfgctx.tokenizer, block_size=cfgctx.block_size), batch_size=4)
-    # #.shuffle()
-    # dl = torch.utils.data.DataLoader(
-    #     dataset=ds,
-    #     batch_size=cfgctx.batch_size,
-    #     #prefetch_factor=4, persistent_workers=True,
-    #     num_workers = 0,
-    #     pin_memory = True,
-    # )
-    # for pretest_batch in dl:
-    #     return
-
-
 
     if command == 'train':
         torch.backends.cudnn.benchmark = cfg.trainer_factory['precision'] == "fp32"
@@ -127,7 +104,6 @@ def run(command, cfg : Config):
         # test model on one batch first so we get good errors quickly even when compiling or logging into wandb
         if cfg.pretest and (cfg.compile or len(cfg.trainer_factory['logger']) > 0):
             print("Pre-testing model...")
-            dataset.tokenizer.tokenize_join_and_slice_in_context(None)
             with torch.no_grad():
                 for pretest_batch in train_loader:
                     # if torch.cuda.is_available():
@@ -237,7 +213,6 @@ def cli():
         cfg = disk_cfg()
     except TypeError:
         raise util.config.ConfigInstantiationError("Error instantiating config - did you forget a 'lambda:', causing a class or function to be called immediately with not all of its arguments supplied? Unfortunately we can't know where in the config... see above exception for type involved")
-    log_always("config:" + "\n" + str(cfg) + "\n")
 
     run(args.command, cfg)
 

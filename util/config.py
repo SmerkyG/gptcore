@@ -4,73 +4,50 @@ import shlex
 import inspect
 import types
 import collections.abc
-
-import pydoc
-
-import builtins
-class MissingType(): pass
-Missing = MissingType()
-# same as pydoc.locate, except this function can tell you if an attribute exists even if it's set to None
-def locate(path, missing_value=None, forceload:bool=False):
-    """Locate an object by name or dotted path, importing as necessary."""
-    parts = [part for part in path.split('.') if part]
-    module, n = None, 0
-    while n < len(parts):
-        nextmodule = pydoc.safeimport('.'.join(parts[:n+1]), forceload)
-        if nextmodule: module, n = nextmodule, n + 1
-        else: break
-    if module:
-        object = module
-    else:
-        object = builtins
-    for part in parts[n:]:
-        try:
-            object = getattr(object, part)
-        except AttributeError:
-            return missing_value
-    return object
-
+from collections import OrderedDict
 
 from util.type_utils import type_name, is_generic_instance
 
+from util.locate import locate, Missing
+
 T = typing.TypeVar("T")
 class IPartial(typing.Generic[T]):
-    # FIXME - put replace_with_instance here instead of in each subclass?
-    pass
+    def __init__(self, immediate:bool):
+        self.immediate = immediate
 
-def recursively_replace_factory_as_needed(c):
+def recursively_replace_immediate_ipartials_as_needed(c):
     if isinstance(c, list):
         for i, v in enumerate(c):
-            c[i] = recursively_replace_factory_as_needed(v)
+            c[i] = recursively_replace_immediate_ipartials_as_needed(v)
     elif isinstance(c, dict):
         for k, v in c.items():
-            c[k] = recursively_replace_factory_as_needed(v)
-    elif isinstance(c, Factory) and c.replace_with_instance:
+            c[k] = recursively_replace_immediate_ipartials_as_needed(v)
+    elif isinstance(c, Factory) and c.immediate:
         c = c()
-    elif isinstance(c, MemberAccessor) and c.replace_with_instance:
+    elif isinstance(c, MemberAccessor) and c.immediate:
         c = c()
-    elif isinstance(c, IdentifierAccessor) and c.replace_with_instance:
+    elif isinstance(c, IdentifierAccessor) and c.immediate:
         c = c()
     return c
 
-def recursively_replace_identifier_accessors_as_needed(c):
+def recursively_replace_identifier_accessors(c):
     if isinstance(c, list):
         for i, v in enumerate(c):
-            c[i] = recursively_replace_identifier_accessors_as_needed(v)
+            c[i] = recursively_replace_identifier_accessors(v)
     elif isinstance(c, dict):
         for k, v in c.items():
-            c[k] = recursively_replace_identifier_accessors_as_needed(v)
+            c[k] = recursively_replace_identifier_accessors(v)
     elif isinstance(c, Factory):
         for i, v in enumerate(c.args):
-            c.args[i] = recursively_replace_identifier_accessors_as_needed(v)
+            c.args[i] = recursively_replace_identifier_accessors(v)
         for k, v in c.kwargs.items():
-            c.kwargs[k] = recursively_replace_identifier_accessors_as_needed(v)
+            c.kwargs[k] = recursively_replace_identifier_accessors(v)
     elif isinstance(c, MemberAccessor):
-        c.inner_ipartial = recursively_replace_identifier_accessors_as_needed(c.inner_ipartial)
+        c.inner_ipartial = recursively_replace_identifier_accessors(c.inner_ipartial)
         for i, v in enumerate(c.args):
-            c.args[i] = recursively_replace_identifier_accessors_as_needed(v)
+            c.args[i] = recursively_replace_identifier_accessors(v)
         for k, v in c.kwargs.items():
-            c.kwargs[k] = recursively_replace_identifier_accessors_as_needed(v)
+            c.kwargs[k] = recursively_replace_identifier_accessors(v)
     elif isinstance(c, IdentifierAccessor):
         #c_old = c
         c = c()
@@ -78,9 +55,12 @@ def recursively_replace_identifier_accessors_as_needed(c):
     return c
 
 class Factory(typing.Generic[T], IPartial[T]):
-    def __init__(self, type_or_typename : typing.Union[type, str, None] = None, placeholders={}, *args, **kwargs):
+    def __init__(self, type_or_typename : typing.Union[type, str, None] = None, *args, **kwargs):
+        super().__init__(False)
+        self.placeholders = {}
+
         if isinstance(type_or_typename, str):
-            self.func_type = pydoc.locate(type_or_typename)
+            self.func_type = locate(type_or_typename)
             if self.func_type is None:
                 raise Exception(f"No such class or function found {type_or_typename} during Factory.init (are you missing the module name or import?)")
         else:
@@ -91,8 +71,6 @@ class Factory(typing.Generic[T], IPartial[T]):
 
         self.args = list(args)
         self.kwargs = dict(kwargs)
-        self.placeholders = dict(placeholders)
-        self.replace_with_instance = False
 
     def __call__(self, /, *args, **kwargs) -> T:
         if self.func_type is None:
@@ -106,9 +84,9 @@ class Factory(typing.Generic[T], IPartial[T]):
         #kwargs.update(kwargs)
 
         for i, v in enumerate(args):
-            args[i] = recursively_replace_factory_as_needed(v)
+            args[i] = recursively_replace_immediate_ipartials_as_needed(v)
         for k, v in kwargs.items():
-            kwargs[k] = recursively_replace_factory_as_needed(v)
+            kwargs[k] = recursively_replace_immediate_ipartials_as_needed(v)
        
         return self.func_type(*args, **kwargs)
     
@@ -156,13 +134,13 @@ class Factory(typing.Generic[T], IPartial[T]):
 
 
 class IdentifierAccessor(typing.Generic[T], IPartial[T]):
-    def __init__(self, fullid : str, replace_with_instance:bool = True):
+    def __init__(self, fullid : str, immediate:bool = True):
+        super().__init__(immediate)
         #print(f"IdentifierAccessor {fullid}")
         self.fullid = fullid
-        self.replace_with_instance = replace_with_instance
 
     def __call__(self) -> typing.Any: # can't know the return type, unfortunately, since it's a string based identifier accessor
-        rv = pydoc.locate(self.fullid)
+        rv = locate(self.fullid)
         #print(f"Calling IdentifierAccessor {self.fullid} == {rv}")
         return rv
 
@@ -170,14 +148,15 @@ class IdentifierAccessor(typing.Generic[T], IPartial[T]):
         return f"{type(self).__name__}({self.fullid})"
 
 class MemberAccessor(typing.Generic[T], IPartial[T]):
-    def __init__(self, member_name : str, inner_ipartial : IPartial[T], is_call:bool = False, replace_with_instance:bool = True, placeholders={}, *args, **kwargs):
+    def __init__(self, member_name : str, inner_ipartial : IPartial[T], is_call:bool = False, immediate:bool = True, placeholders = {}, *args, **kwargs):
+        super().__init__(immediate)
+        self.placeholders = placeholders
+
         self.inner_ipartial = inner_ipartial
         self.member_name = member_name
         self.is_call = is_call
         self.args = list(args)
         self.kwargs = dict(kwargs)
-        self.placeholders = dict(placeholders)
-        self.replace_with_instance = replace_with_instance
 
     def __call__(self, /, *args, **kwargs) -> typing.Any: # can't know the return type, unfortunately, since it's a string based property accessor or member fn invocation
         #print(f"MEMBERACCESSOR {self.inner_ipartial}", self.is_call, args, self.args, kwargs, self.kwargs)
@@ -190,11 +169,11 @@ class MemberAccessor(typing.Generic[T], IPartial[T]):
         kwargs.update(kwargs)
 
         #for i, v in enumerate(args):
-        #    args[i] = recursively_replace_factory_as_needed(v)
+        #    args[i] = recursively_immediate_ipartials_as_needed(v)
         #for k, v in kwargs.items():
-        #    kwargs[k] = recursively_replace_factory_as_needed(v)
+        #    kwargs[k] = recursively_immediate_ipartials_as_needed(v)
 
-        obj = recursively_replace_factory_as_needed(self.inner_ipartial)
+        obj = recursively_replace_immediate_ipartials_as_needed(self.inner_ipartial)
 
         # must be a property OR could be a weird override like in IterDataPipe - they manually override __getattr__ to return partials corresponding to shuffle, etc.
         attr = getattr(obj, self.member_name, None)
@@ -221,37 +200,34 @@ class MemberAccessor(typing.Generic[T], IPartial[T]):
         rv += ')'
         return rv    
 
-import collections
-collections.UserDict
+# def ImmediateFactory(type_or_typename : type | str | None = None, *args, **kwargs):
+#     rv = Factory(type_or_typename, *args, **kwargs)
+#     rv.immediate = True
+#     return rv
 
-def RFactory(type_or_typename : type | str | None = None, *args, **kwargs):
-    rv = Factory(type_or_typename, *args, **kwargs)
-    rv.replace_with_instance = True
-    return rv
+# def merge(dst : Factory | dict, src : Factory | dict):
+#     # merge instances of Factory, dict, and list
+#     if type(src) == type(dst):
+#         if isinstance(src, Factory):
+#             # FIXME - add some sort of required superclass too
+#             if src.func_type != type(None):
+#                 dst.func_type = src.func_type
+#             #dst.args = src.args
+#             dst.kwargs = merge(dst.kwargs, src.kwargs)
+#             return dst
+#         elif isinstance(src, dict):
+#             for k, srcv in src.items():
+#                 dst[k] = merge(dst[k], srcv) if k in dst else srcv
+#             return dst
+#         elif isinstance(src, list):
+#             dst.clear()
+#             for i, srcv in enumerate(src):
+#                 dst[i] = merge(dst[i], srcv)
+#             return dst
+#     # otherwise, just copy it
+#     return src
 
-def merge(dst : Factory | dict, src : Factory | dict):
-    # merge instances of Factory, dict, and list
-    if type(src) == type(dst):
-        if isinstance(src, Factory):
-            # FIXME - add some sort of required superclass too
-            if src.func_type != type(None):
-                dst.func_type = src.func_type
-            #dst.args = src.args
-            dst.kwargs = merge(dst.kwargs, src.kwargs)
-            return dst
-        elif isinstance(src, dict):
-            for k, srcv in src.items():
-                dst[k] = merge(dst[k], srcv) if k in dst else srcv
-            return dst
-        elif isinstance(src, list):
-            dst.clear()
-            for i, srcv in enumerate(src):
-                dst[i] = merge(dst[i], srcv)
-            return dst
-    # otherwise, just copy it
-    return src
-
-def typecheck(path : str, self : typing.Any, required_type : type = typing.Any, is_replace_with_instance_factory:bool = True):
+def typecheck(path : str, obj : typing.Any, required_type : type = typing.Any, is_immediate_factory:bool = True):
     errors = ''
     try:
         # print(f"typecheck {path} {required_type}")
@@ -263,38 +239,38 @@ def typecheck(path : str, self : typing.Any, required_type : type = typing.Any, 
         #if type == typing.Any:
         #    return errors
 
-        if isinstance(self, IdentifierAccessor):
+        if isinstance(obj, IdentifierAccessor):
             # allow IdentifierAccessors through, since they return Any
             return errors
 
 
-        if not is_generic_instance(self, required_type):           
-            if not isinstance(self, Factory):
+        if not is_generic_instance(obj, required_type):           
+            if not isinstance(obj, Factory):
                 #    print(f"Factory found {v.func_type}")
                 # get_config_func_options(parent_key, value) + \
-                errors += f"Config Type Mismatch: expected {type_name(required_type)} but got {type_name(type(self))}\n in config setting `{path}` : {type_name(required_type)} = {self}\n"
+                errors += f"Config Type Mismatch: expected {type_name(required_type)} but got {type_name(type(obj))}\n in config setting `{path}` : {type_name(required_type)} = {obj}\n"
                 return errors
 
-        if isinstance(self, Factory):
-            if typing.get_origin(required_type) == collections.abc.Callable and self.replace_with_instance: # wanted a factory but got what is probably a method invocation
-                errors += f"Config Type Mismatch: expected Factory/Callable but got immediate invocation of {type_name(self.func_type)} (did you forget to prefix this with 'lambda:'?)\n in config setting `{path}` : {type_name(required_type)} = {self}\n"
+        if isinstance(obj, Factory):
+            if typing.get_origin(required_type) == collections.abc.Callable and obj.immediate: # wanted a factory but got what is probably a method invocation
+                errors += f"Config Type Mismatch: expected Factory/Callable but got immediate invocation of {type_name(obj.func_type)} (did you forget to prefix this with 'lambda:'?)\n in config setting `{path}` : {type_name(required_type)} = {obj}\n"
                 return errors
 
             # fill in func_type when Empty but we have a type annotation
             # FIXME - add and check some sort of required superclass too
-            if self.func_type == type(None):
-                self.func_type = required_type
+            if obj.func_type == type(None):
+                obj.func_type = required_type
 
-            if isinstance(self.func_type, types.FunctionType):
-                sig = inspect.signature(self.func_type)
+            if isinstance(obj.func_type, types.FunctionType):
+                sig = inspect.signature(obj.func_type)
                 is_fn = True
             else:
-                sig = inspect.signature(self.func_type.__init__)
+                sig = inspect.signature(obj.func_type.__init__)
                 is_fn = False
 
             for k, p in sig.parameters.items():
                 #if kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD):
-                if k in self.kwargs or k in self.placeholders:
+                if k in obj.kwargs or k in obj.placeholders:
                     continue
 
                 if p.default is not p.empty:
@@ -309,23 +285,23 @@ def typecheck(path : str, self : typing.Any, required_type : type = typing.Any, 
                         return f"Missing config setting `{path}.{k}` : {type_name(p.annotation)}\n"
 
             # traverse all subelements recursively
-            for k, v in self.kwargs.items():
+            for k, v in obj.kwargs.items():
                 if k not in sig.parameters.keys():
-                    return f'Disallowed config entry `{path}.{k}` - No such parameter {k} in {self.func_type}\n'
+                    return f'Disallowed config entry `{path}.{k}` - No such parameter {k} in {obj.func_type}\n'
                 p = sig.parameters[k]
                 rt = p.annotation
                 if rt == inspect.Parameter.empty:
                     rt = typing.Any
-                errors += typecheck(path + '.' + k, v, rt, self.replace_with_instance)
+                errors += typecheck(path + '.' + k, v, rt, obj.immediate)
 
 
-        elif isinstance(self, dict):
+        elif isinstance(obj, dict):
             # traverse all subelements recursively
-            for k, v in self.items():
+            for k, v in obj.items():
                 errors += typecheck(path + '.' + k, v)
-        elif isinstance(self, list):
+        elif isinstance(obj, list):
             # traverse all subelements recursively
-            for i, v2 in enumerate(self):
+            for i, v2 in enumerate(obj):
                 errors += typecheck(f'{path}[{i}]', v2)
 
     except Exception as ex:
@@ -387,7 +363,7 @@ class ConfigParser():
                     break
         if isinstance(node, Expression):
             node = node.body
-        self.locals = {}
+        self.locals = OrderedDict()
         return self.process(node)
 
     def process(self, node):
@@ -458,7 +434,7 @@ class ConfigParser():
                     if not isinstance(value, IdentifierAccessor):
                         #print(value)
                         #print(ast.dump(node))
-                        return MemberAccessor(member_name=node.attr, inner_ipartial=value, is_call=False, replace_with_instance=True)
+                        return MemberAccessor(member_name=node.attr, inner_ipartial=value, is_call=False, immediate=True, placeholders={})
                         #raise ConfigParseError(node, self.unparsed_input, 'configuration files do not support member access (neither properties nor functions)')
                     id = value.fullid + '.' + str(node.attr)
                     fullid = self.imports_map[id] if id in self.imports_map else id
@@ -487,16 +463,16 @@ class ConfigParser():
                     if not isinstance(node.body, Call) or not isinstance(node.body.func, (Name, Attribute)):
                         raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must be used to return a Factory or MemberAccessor')
                         #raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must have zero arguments, and is used to return a Factory')
-                    # FIXME - instead of calling create_factory directly here we could somehow indicate that the result should be replace_with_instance=False and just always process node.body.func
+                    # FIXME - instead of calling create_factory directly here we could somehow indicate that the result should be immediate=False and just always process node.body.func
                     node = node.body
                     if isinstance(node.func, Attribute) and isinstance(node.func.value, Call):
                         # create MemberAccessor
                         args, kwargs, placeholders = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
                         #print("CAPTURING MemberAccess ", node.func.attr, placeholders, args, kwargs)
-                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, replace_with_instance=False, placeholders=placeholders, *args, **kwargs)
+                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, immediate=False, placeholders=placeholders, *args, **kwargs)
                     else:
                         # create Factory
-                        rv = self.create_factory(node, node.args, node.keywords, replace_with_instance=False)
+                        rv = self.create_factory(node, node.args, node.keywords, immediate=False)
 
                     self.locals = locals_tmp
                     return rv
@@ -508,7 +484,7 @@ class ConfigParser():
                         # create MemberAccessor
                         args, kwargs, placeholders = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
                         #print("CAPTURING CallMemberAccess ", node.func.attr, placeholders, args, kwargs)
-                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, replace_with_instance=True, placeholders=placeholders, *args, **kwargs)
+                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, immediate=True, placeholders=placeholders, *args, **kwargs)
 
                     if isinstance(node.func, (Name, Attribute)):
                         ident = self.process(node.func)
@@ -521,12 +497,12 @@ class ConfigParser():
                                 return set(map(self.process, node.args))
                             case 'dict':
                                 return {k.arg : self.process(k.value) for k in node.keywords}
-                            case 'config.Factory':
-                                return self.create_factory(node.args[0], node.args[1:], node.keywords)
+                            case 'util.config.Factory':
+                                return self.create_factory(node.args[0], node.args[1:], node.keywords, immediate=False)
                             case _:
                                 # FIXME - maybe we should disallow non-named arguments and only allow kwargs in configs
                                 # allows UDTs to be created via deferred instantiation
-                                rv = self.create_factory(node, node.args, node.keywords, replace_with_instance=True)
+                                rv = self.create_factory(node, node.args, node.keywords, immediate=True)
                                 return rv
                 case _:
                     raise ConfigParseError(node, self.unparsed_input, f"configs do not support language element '{type_name(type(node))}'")
@@ -540,6 +516,15 @@ class ConfigParser():
     
     def process_args_and_keywords(self, node_args, node_keywords):
         args = list([self.process(a) for a in node_args])
+        locals_list = list(self.locals.keys())
+        for i, value in enumerate(args):
+            if not isinstance(value, LocalIdentifier):
+                break
+            else:
+                if len(self.locals) <= i:
+                    raise ConfigParseError(node_args[i], self.unparsed_input, f"in configs, lambda local identifiers may only be passed to positional arguments in the order they came into the lambda. '{value.name}' came after all locals were exhausted")
+                elif value.name != locals_list[i]:
+                    raise ConfigParseError(node_args[i], self.unparsed_input, f"in configs, lambda local identifiers may only be passed to positional arguments in the order they came into the lambda. '{value.name}' should be '{locals_list[i]}'")
 
         kwargs = {}
         placeholders = {}
@@ -552,32 +537,34 @@ class ConfigParser():
 
             # remove placeholder identifiers so they don't cause a collision
             if isinstance(value, LocalIdentifier):
+                # for now, disallow remapping of names from lambda input args to factory kwargs
+                if value.name != str(kw.arg):
+                    raise ConfigParseError(kw, self.unparsed_input, f"in configs, lambda local identifiers may only be passed to keyword arguments of the same name. Found mismatched: {kw.arg}={value.name}")
                 placeholders[kw.arg] = value
             else:
                 kwargs[kw.arg] = value
         
         return args, kwargs, placeholders
 
-    def create_factory(self, node, node_args, node_keywords, replace_with_instance:bool):
+    def create_factory(self, node, node_args, node_keywords, immediate:bool):
         func_node = node.func
         func_ident = self.process(func_node)
         if not isinstance(func_ident, IdentifierAccessor):
             raise ConfigParseError(func_node, self.unparsed_input, msg = f'huh got unexpected identifier {func_ident}')
         func_name = func_ident.fullid
 
-        func_type = pydoc.locate(func_name)
+        func_type = locate(func_name)
         if func_type is None:
             raise ConfigParseError(node, self.unparsed_input, f"No such class or function found {func_name} while constructing Factory (are you missing the module name or import?)")
         if not callable(func_type) and not isinstance(func_type, type):
             raise ConfigParseError(node, self.unparsed_input, f"Factory requires a callable function or class but got: {func_name}")
 
         args, kwargs, placeholders = self.process_args_and_keywords(node_args=node_args, node_keywords=node_keywords)
-        if func_name == "dataset.tokenizer.tokenize_join_and_slice":
-            print("dataset.tokenizer.tokenize_join_and_slice", "args", args, "kwargs", kwargs, "placeholders", placeholders)
 
         try:
-            rv = Factory(func_type, placeholders, *args, **kwargs)
-            rv.replace_with_instance = replace_with_instance
+            rv = Factory(func_type, *args, **kwargs)
+            rv.immediate = immediate
+            rv.placeholders = placeholders
         except Exception as e:
             raise ConfigParseError(node, self.unparsed_input, str(e)) from None
         return rv
