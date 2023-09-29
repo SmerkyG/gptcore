@@ -33,24 +33,33 @@ pip install torch lightning deepspeed einops transformers datasets wandb
 
 If you want to just get started quickly, there are lots of pre-existing examples of config files to look at or try in the `configs/` directory.
 
-GPT Core config files are used to set hyperparameters as well as select the components that make up your model. They follow Python syntax, and ***FULLY SUPPORT AUTOCOMPLETE*** in editors like VSCode.
+GPT Core config files are used to set hyperparameters as well as select the components that make up your model. They follow Python syntax, and ***FULLY SUPPORT AUTOCOMPLETE*** in editors like VSCode. This makes it very easy to edit them, check them for errors, or see what options are available - all from within your favorite IDE.
 
 Example config file:
 
 ```
 import cli
 import model.core
+import lit
 import torch.optim
+
+MAX_SEQUENCE_LENGTH = 1024
+
 cli.Config(
     seed_everything = 1337,
     compile = True,
-    model_factory = lambda: model.core.Decoder()
-    optimizer_factory = lambda: torch.optim.Adam(lr=6e-4),
+    model_factory = lambda: model.core.Decoder(
+        max_sequence_length=MAX_SEQUENCE_LENGTH,
+    ),
+    trainer_factory = lambda: lit.LightningMetaTrainer(
+        optimizer_factory = lambda: torch.optim.Adam(lr=6e-4),
+    ),
 )
 ```
 
+GPT Core config files contain imports, then optional variable assignments, then a final expression that is considered the result of the config file.
 
-GPT Core config files are just a way of constructing objects like you would in Python. The best reference for what options a config file takes is the source code itself. The main outer config definition can be found at the top of `cli.py` - there you will see `@dataclass class Config:` Other classes instantiated within your config file just take whatever arguments their constructors normally would.
+These files are just a way of constructing an object like you would in Python. The best reference for what options a configuration object takes is the source code itself. The main outer config definition can be found at the top of `cli.py` - there you will see `@dataclass class Config:` Other classes instantiated within your config file just take whatever arguments their constructors normally would.
 
 The only special thing to know about GPT Core config files is that any parameter that ends in `_factory` should be set via a `lambda:` 
 
@@ -64,7 +73,7 @@ This is because components require deferred instantiation. Deferral of instantia
 python cli.py train -c configs/gptalpha.cfg.py
 ```
 
-GPT Core currently relies on the Lightning trainer, so you can look at the [lightning docs](https://lightning.ai/docs/app/stable/) to learn how to do various tasks like continue from a checkpoint, add custom callbacks during training, etc.
+GPT Core currently supports the Lightning trainer via its class `lit.LightningMetaTrainer`. The GPT Core class `lit.LightningMetaTrainer` exactly matches the Lightning API, slightly flattened for ease of use in config files. So as you explore the autocomplete for LightningMetaTrainer you can look at the [lightning docs](https://lightning.ai/docs/app/stable/) to learn how to do various tasks like continue from a checkpoint, add custom callbacks during training, etc. 
 
 ## datasets
 
@@ -74,7 +83,7 @@ Consider trying other huggingface datasets, such as OpenWebText:
 
 ## logging
 
-The example config files show how to use [WandB](https://wandb.ai/home) for logging, but any logger, multiple loggers, or even no logger can be used. See [lightning docs](https://lightning.ai/docs/app/stable/) for info.
+The example config files show how to use [WandB](https://wandb.ai/home) for logging, but any logger, multiple loggers, or even no logger can be used. See [lightning docs](https://lightning.ai/docs/app/stable/) for more info.
 
 You can easily choose which metrics to log using the config system and parameterize them like so (or create new ones):
 ```
@@ -96,7 +105,7 @@ To have a validation done and checkpoint written, add the following config setti
 
 ```
 trainer_factory = lambda: lightning.Trainer(
-    val_check_interval=1024,
+    val_check_interval=1024, # choose whatever number of steps you'd like here
 )
 ```
 
@@ -105,11 +114,10 @@ trainer_factory = lambda: lightning.Trainer(
 Continue a training run from an existing checkpoint by supplying the following kind of config setting:
 
 ```
-fit_factory = lambda: lightning.Trainer.fit(
+trainer_factory = lambda: lit.LightningMetaTrainer(
     ckpt_path='checkpoints/epoch=0-step=256.ckpt',
 )
 ```
-Unlike many of the factory settings in config which are deferred class instantiations, this lambda represents the deferred function call to your trainer's `fit()` function.
 
 ## run a model for inference
 
@@ -125,11 +133,11 @@ GPT Alpha is the custom LLM that comes with GPT Core. It employs many of the bes
 The following are some of the improvements it uses:
 
 #### Small embedding initializations [citation](https://github.com/BlinkDL/SmallInitEmb)
-Embeddings are initialized to a small value but are then immediately normalized. This immediately creates an embedding space that is well distributed around the unit sphere, and converges in a rapid fashion with desirable qualities, even with no warmup.
+Embeddings are initialized to a small value but are then immediately normalized. This immediately creates an embedding space that is well distributed around the unit hypersphere, and converges in a rapid fashion with desirable qualities, even with no warmup.
 #### Weight Tying [citation](https://arxiv.org/abs/1608.05859v3)
 The unembedding which translates from the final layer embeddings back to token ids relies on the same weights as the embedding, resulting in faster training and significantly smaller model size.
 #### Rotary Positional Embedding (RoPE) [citation](https://arxiv.org/abs/2104.09864) / Attention with Linear Biases (ALiBi) [citation](https://arxiv.org/abs/2108.12409)
-We use RoPE or ALiBi to adjust query and key values before the attention computation, so that a flexible form of positional information is used by the network. This causes faster learning as well as
+We use RoPE to adjust query and key values before the attention computation or ALiBi to bias attention results, so that a flexible form of positional information is used by the network. 
 Unfortunately, we do not yet include the upcoming version of FlashAttention that would support ALiBi style biases, so ALiBi is currently significantly slower than RoPE using our platform.
 #### RMSNorm / L2Norm [citation](https://arxiv.org/abs/1910.07467) [citation](https://arxiv.org/abs/2307.14995)
 Prior formulations used BatchNorm or LayerNorm, but with proper initialization and scaling we can use root mean square norm and sometimes unscaled L2 norm with no weight learning. This results in faster learning with no downsides.
@@ -146,7 +154,7 @@ Instead of using the token embedding at a specific sequence position, we use a m
 #### Specialized Feed Forward Network [citation](https://arxiv.org/abs/2305.13048) [citation](https://arxiv.org/abs/2002.05202) [citation](https://arxiv.org/abs/2109.08668)
 We adopt most of the practices from the RWKV channel mix feed forward network. This includes Time Lerp, which is used in our feed forward network as well as other places, and specialized gating.
 #### Residual Mixing [self-citation](https://github.com/SmerkyG/gptcore)
-Sublayers (attention and feed forward) are mixed together with the residual using a specific kind of learned ratio. We find this has slightly better results and costs very little to evaluate.
+Sublayers (attention and feed forward) are mixed with the residual using a learned vector ratio L via `L*residual+(2-L)*value`. We find this has slightly better results and costs very little to evaluate.
 #### No bias [citation](https://arxiv.org/abs/2212.14034)
 Only weights, and no bias is used throughout the model
 
