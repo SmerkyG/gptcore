@@ -3,7 +3,7 @@ from pydoc import locate
 import typing
 import types
 import inspect
-import collections
+import collections.abc
 
 # def instantiate(required_type : type, args : dict, **kwargs):
 #     if 'class' in args:

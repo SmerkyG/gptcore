@@ -14,10 +14,12 @@ import model.interface
 from model.hparams import HParams
 
 import model.core
+import posemb.interface
 
-class GPT2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int, hidden_activation_factory : Callable[..., nn.Module] = Factory(nn.GELU, approximate='tanh')):
+class GPT2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, model.core.TransformerLayerPart):
+    def __init__(self, hidden_activation_factory : Callable[..., nn.Module] = Factory(nn.GELU, approximate='tanh')):
         super().__init__()
+        hparams = self.hparams
         d_hidden = int(hparams.d_model * hparams.feedforward_d_model_ratio)
         self.ff_expansion = nn.Linear(hparams.d_model, d_hidden, bias=False)
         self.activation = hidden_activation_factory()
@@ -31,16 +33,17 @@ class GPT2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
         x = self.dropout(x)
         return x
 
-class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int, attention_factory : Callable[..., model.core.IAttention] = Factory(model.core.TorchAttention)):
+class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+    def __init__(self, attention_factory : Callable[..., model.core.IAttention] = Factory(model.core.TorchAttention)):
         super().__init__()
-        self.hparams = hparams
+        hparams, layer_id = self.hparams, self.layer_id
         C = hparams.d_model
         H = hparams.n_head
         K = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         Q = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         V = int(hparams.d_v_ratio * hparams.d_model / hparams.n_head)
-
+        T = hparams.max_sequence_length
+        
         self.w_query = nn.Linear(C, H * Q, bias=False)
         self.w_key = nn.Linear(C, H * K, bias=False)
         self.w_value = nn.Linear(C, H * V, bias=False)
@@ -49,9 +52,9 @@ class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
         def w_out_init(m): m.weight *= ((2 * self.hparams.n_layer)**-0.5)
         model.core.defer_module_init(self.w_out, w_out_init)
 
-        self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(hparams)
+        self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(T, Q)
 
-        self.attention_module = attention_factory(hparams=hparams, layer_id=layer_id)
+        self.attention_module = attention_factory()
 
     def forward(self, xq : Tensor, xk : Tensor, xv : Tensor, recurrent_memory : Optional[Tensor] = None):       
         hparams = self.hparams

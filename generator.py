@@ -9,6 +9,73 @@ import model
 import model.core
 import sampler
 
+from util.config import Factory
+import cli
+import cfgctx
+import torch.amp
+from contextlib import nullcontext
+from dataclasses import dataclass, field
+
+def field_default(fn):
+    return field(default_factory=fn)
+
+@dataclass
+class Evaluator(cli.IEvaluator):
+    sampler_factory:Factory=field_default(lambda: Factory(sampler.TopKPTailFreeSampler, temperature=1.0, top_p=0.7))
+
+    def eval(self, cfg : cli.ConfigBase):
+        max_new_tokens = 500
+        device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
+        dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
+        device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
+        ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+        ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+
+        out_dir = 'out'
+        ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        hparams = checkpoint['hparams']
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        model = model.core.Decoder(hparams)
+        state_dict = checkpoint['model']
+        unwanted_prefix = 'model._orig_mod.'
+        wanted_prefix = ''
+        for k,v in list(state_dict.items()):
+            if k.startswith(unwanted_prefix):
+                state_dict[wanted_prefix + k[len(unwanted_prefix):]] = state_dict.pop(k)
+        model.load_state_dict(state_dict)
+        model.eval()
+        model.to(device)
+        gen = Generator(model)
+
+        starter_text = "<|endoftext|>In a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
+        #starter_text = starter_text + starter_text
+        tokenized_starter_text = cfgctx.tokenizer(starter_text)['input_ids']
+        starter_ids = tokenized_starter_text[-1025:-1]
+        predicted = tokenized_starter_text[-1024:]
+        x = (torch.tensor(starter_ids, dtype=torch.long, device=device)[None, ...])
+        y = (torch.tensor(predicted, dtype=torch.long, device=device)[None, ...])
+
+        # with torch.no_grad():
+        #     logits = model.forward(x)
+        #     predicted_labels = logits.argmax(dim=-1)
+        #     acc = predicted_labels.eq(y).sum() / float(y.size(0)*y.size(1))
+        #     print(f"acc {float(acc)}")
+
+        #     print(tokenizer.decode(predicted_labels.squeeze(0).tolist()))
+        
+
+        sampler = self.sampler_factory()
+        print(cfgctx.tokenizer.decode(starter_ids))
+        print("...")
+        with torch.no_grad():
+            with ctx:
+                for tok in gen.generate_tokens(x, max_new_tokens, sampler, alpha_frequency = 0.25, alpha_presence = 0.25, alpha_decay = 1.0 / 200):
+                    print(cfgctx.tokenizer.decode(tok.item()), end='')
+                    #print(decode(y[0].tolist()))
+                print('')
+                print('---------------')
+
 class Generator(nn.Module):
     def __init__(self, model : model.core.IEncoderDecoder):
         super().__init__()

@@ -22,6 +22,7 @@ from torch import Tensor
 from einops import rearrange
 
 import model.interface
+import model.core
 from model.hparams import HParams
 
 def auto_assign_attrs(cls, **kwargs):
@@ -381,25 +382,24 @@ class HyenaOperator(nn.Module):
     def d_output(self):
         return self.d_model
 
-class HyenaAttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int):
+class HyenaAttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+    def __init__(self):
         super().__init__()
-        assert(layer_id >= 0)
         self.hyena = HyenaOperator(
-            d_model=hparams.d_model,
-            l_max=hparams.block_size,
+            d_model=self.hparams.d_model,
+            l_max=self.hparams.max_sequence_length,
         )
 
     def forward(self, xq : Tensor, xk : Tensor, xv : Tensor, recurrent_memory : Optional[Tensor] = None):
         x = xq # FIXME - support encoder-decoder models
         return self.hyena(x)
 
-class HyTention(nn.Module, model.core.IAttention):
+class HyTention(nn.Module, model.core.IAttention, model.core.TransformerLayerPart):
     # a very simplified version of the Hyena operator to make it easy to understand, with none of the initialization and slow conv1d instead of fast fft'd convolutions
-    def __init__(self, hparams : HParams, layer_id : int):
+    def __init__(self):
         super().__init__()
-        assert(layer_id >= 0)
-        T = hparams.block_size
+        hparams = self.hparams
+        T = hparams.max_sequence_length
         Q = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         self.kv_conv = nn.Conv1d(Q, Q, kernel_size=T, groups=Q)
 

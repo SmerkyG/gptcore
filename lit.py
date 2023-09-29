@@ -3,13 +3,18 @@ from typing import Any, Optional, Tuple
 import time
 import math
 
+import lightning
 import lightning as L
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import functional as F
 import torch.optim.lr_scheduler
+import torch.utils.data.dataset
 import scheduler
+
+import torch.backends.cuda
+import torch.backends.cudnn
 
 import metrics
 
@@ -19,9 +24,83 @@ from lightning import LightningModule
 
 from util.config import Factory
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from typing import Callable, Any
+
+import cli
+
+def field_default(fn):
+    return field(default_factory=fn)
+
+def collate_target_tokens_offset_by_one(batch): 
+    values = torch.utils.data.default_collate(batch)
+    return values[..., :-1], values[..., 1:]
+
+@dataclass
+class LightningMetaTrainer(cli.ITrainer):
+    train_dataset_factory:Callable[..., torch.utils.data.dataset.Dataset]=field_default(lambda: Factory())
+    train_dataloader_factory:Callable[..., torch.utils.data.DataLoader]=field_default(lambda: Factory())
+    val_dataset_factory:Callable[..., torch.utils.data.dataset.Dataset]=field_default(lambda: Factory())
+    val_dataloader_factory:Callable[..., torch.utils.data.DataLoader]=field_default(lambda: Factory())
+    datamodule_factory:Callable[..., lightning.LightningDataModule]=field_default(lambda: Factory())
+    optimizer_factory:Callable[..., torch.optim.Optimizer]=field_default(lambda: Factory(torch.optim.Adam))
+    loss_fn_factory : Callable[..., torch.nn.Module] = field_default(lambda: Factory(torch.nn.CrossEntropyLoss, ignore_index=-1))
+    loss_wrapper_factory : Callable[..., torch.autograd.Function | None] = field_default(lambda: Factory())
+    scheduler_config:scheduler.LRSchedulerConfig | None=None
+    lightning_trainer_factory:Callable[..., lightning.Trainer]=field_default(lambda: Factory(lightning.Trainer, precision=32))
+    fit_factory:Callable=field_default(lambda: Factory())
+    metric_factories:dict[str, Callable[..., metrics.IMetric]]=field_default(lambda: {'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)})
+    ckpt_path: str | None = None
+
+    def train(self, cfg : cli.ConfigBase):
+        assert(isinstance(self.lightning_trainer_factory, Factory))
+        torch.backends.cudnn.benchmark = self.lightning_trainer_factory['precision'] == "fp32"
+        torch.backends.cudnn.enabled = self.lightning_trainer_factory['precision'] == "fp32"
+
+        lightning_model = LightningModel(
+            model_factory=cfg.model_factory, 
+            optimizer_factory=self.optimizer_factory, 
+            loss_fn_factory=self.loss_fn_factory,
+            loss_wrapper_factory=self.loss_wrapper_factory,
+            metric_factories=self.metric_factories,
+            scheduler_config=self.scheduler_config,
+        )
+
+        if self.datamodule_factory is not None:
+            datamodule = self.datamodule_factory()
+            train_loader = datamodule.train_dataloader()
+            val_loader = datamodule.val_dataloader()
+        else:
+            train_dataset : torch.utils.data.Dataset = self.train_dataset_factory()
+            val_dataset : torch.utils.data.Dataset = self.val_dataset_factory()
+
+            # FIXME - batch_size = cfg.batch_size, 
+            # FIXME - deal with collate_fn elsewhere
+            train_loader : torch.utils.data.DataLoader = self.train_dataloader_factory(dataset = train_dataset, collate_fn=collate_target_tokens_offset_by_one)
+            val_loader : torch.utils.data.DataLoader = self.val_dataloader_factory(dataset = val_dataset, collate_fn=collate_target_tokens_offset_by_one)
+
+        # test model on one batch first so we get good errors quickly even when compiling or logging into wandb
+        if cfg.pretest and (cfg.compile or len(self.lightning_trainer_factory['logger']) > 0):
+            print("Pre-testing model...")
+            with torch.no_grad():
+                for pretest_batch in train_loader:
+                    # if torch.cuda.is_available():
+                    #    model = model.to(torch.device('cuda'))
+                    #    pretest_batch = pretest_batch.to(torch.device('cuda'))
+                    lightning_model.model(pretest_batch[0][0:1,:])
+                    break
+                print("Testing complete!")
+
+        trainer : lightning.Trainer = self.lightning_trainer_factory(num_sanity_val_steps=0)#, enable_progress_bar=False)#num_sanity_val_steps=1)
+        if cfg.compile:
+            try:
+                lightning_model.model = torch.compile(lightning_model.model)
+            except Exception as e:
+                print(f"Skipping torch.compile due to error: {e}")
+
+        # #torch._dynamo.config.verbose=True
+        trainer.fit(lightning_model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=self.ckpt_path)
 
 def console_clear_last_line():
     print('\033[1A', end='\x1b[2K')
@@ -32,7 +111,7 @@ class LightningModel(LightningModule):
         model_factory : Callable[..., nn.Module] = Factory(model.core.Decoder),
         optimizer_factory : Callable[..., torch.optim.Optimizer|None] = Factory(),
         loss_fn_factory : Callable[..., nn.Module] = Factory(torch.nn.CrossEntropyLoss, ignore_index=-1),
-        loss_wrapper_factory : Callable[..., None] = Factory(),
+        loss_wrapper_factory : Callable[..., torch.autograd.Function | None] = Factory(),
         metric_factories : dict[str, Callable[..., metrics.IMetric]] = {'loss':Factory(metrics.Loss), 'acc':Factory(metrics.Accuracy)},
         scheduler_config : scheduler.LRSchedulerConfig | None = None,
     ) -> None:

@@ -31,49 +31,50 @@ def recursively_replace_immediate_ipartials_as_needed(c):
     return c
 
 def recursively_replace_identifier_accessors(c):
-    if isinstance(c, list):
-        for i, v in enumerate(c):
-            c[i] = recursively_replace_identifier_accessors(v)
-    elif isinstance(c, dict):
-        for k, v in c.items():
-            c[k] = recursively_replace_identifier_accessors(v)
-    elif isinstance(c, Factory):
-        for i, v in enumerate(c.args):
-            c.args[i] = recursively_replace_identifier_accessors(v)
-        for k, v in c.kwargs.items():
-            c.kwargs[k] = recursively_replace_identifier_accessors(v)
-    elif isinstance(c, MemberAccessor):
-        c.inner_ipartial = recursively_replace_identifier_accessors(c.inner_ipartial)
-        for i, v in enumerate(c.args):
-            c.args[i] = recursively_replace_identifier_accessors(v)
-        for k, v in c.kwargs.items():
-            c.kwargs[k] = recursively_replace_identifier_accessors(v)
-    elif isinstance(c, IdentifierAccessor):
-        #c_old = c
-        c = c()
-        #print(f"Replaced IdentifierAccessor {c_old} with {c}")
+    match c:
+        case list():
+            for i, v in enumerate(c):
+                c[i] = recursively_replace_identifier_accessors(v)
+        case dict():
+            for k, v in c.items():
+                c[k] = recursively_replace_identifier_accessors(v)
+        case Factory():
+            for i, v in enumerate(c.args):
+                c.args[i] = recursively_replace_identifier_accessors(v)
+            for k, v in c.kwargs.items():
+                c.kwargs[k] = recursively_replace_identifier_accessors(v)
+        case MemberAccessor():
+            c.inner_ipartial = recursively_replace_identifier_accessors(c.inner_ipartial)
+            for i, v in enumerate(c.args):
+                c.args[i] = recursively_replace_identifier_accessors(v)
+            for k, v in c.kwargs.items():
+                c.kwargs[k] = recursively_replace_identifier_accessors(v)
+        case IdentifierAccessor():
+            #c_old = c
+            c = c()
+            #print(f"Replaced IdentifierAccessor {c_old} with {c}")
     return c
-
+    
 class Factory(typing.Generic[T], IPartial[T]):
-    def __init__(self, type_or_typename : typing.Union[type, str, None] = None, *args, **kwargs):
+    def __init__(self, fn : typing.Union[type, typing.Callable, str, None] = None, *args, **kwargs):
         super().__init__(False)
         self.placeholders = {}
 
-        if isinstance(type_or_typename, str):
-            self.func_type = locate(type_or_typename)
-            if self.func_type is None:
-                raise Exception(f"No such class or function found {type_or_typename} during Factory.init (are you missing the module name or import?)")
+        if isinstance(fn, str):
+            self.fn = locate(fn)
+            if self.fn is None:
+                raise Exception(f"No such class or function found {fn} during Factory.init (are you missing the module name or import?)")
         else:
-            self.func_type = type_or_typename
+            self.fn = fn
 
-        if self.func_type is not None and not callable(self.func_type) and not isinstance(self.func_type, type):
-            raise Exception(f"Factory requires a callable function or class but got: {self.func_type}")
+        if self.fn is not None and not callable(self.fn) and not isinstance(self.fn, type):
+            raise Exception(f"Factory requires a callable function or class but got: {self.fn}")
 
         self.args = list(args)
         self.kwargs = dict(kwargs)
 
     def __call__(self, /, *args, **kwargs) -> T:
-        if self.func_type is None:
+        if self.fn is None:
             return None
 
         args = [*self.args, *args]
@@ -87,8 +88,8 @@ class Factory(typing.Generic[T], IPartial[T]):
             args[i] = recursively_replace_immediate_ipartials_as_needed(v)
         for k, v in kwargs.items():
             kwargs[k] = recursively_replace_immediate_ipartials_as_needed(v)
-       
-        return self.func_type(*args, **kwargs)
+
+        return self.fn(*args, **kwargs)
     
     def toDict(self):
         if self is None:
@@ -96,7 +97,7 @@ class Factory(typing.Generic[T], IPartial[T]):
         def _process(node):
             match node:
                 case Factory():
-                    rv = {"class_path":type_name(node.func_type)}
+                    rv = {"class_path":type_name(node.fn)}
                     if len(node.args) > 0: rv["pos_init_args"] = _process(node.args)
                     if len(node.kwargs) > 0: rv["init_args"] = _process(node.kwargs)
                     return rv
@@ -115,7 +116,7 @@ class Factory(typing.Generic[T], IPartial[T]):
     def __str__(self):
         return self.__repr__()
     def __repr__(self):
-        rv = f"{type(self).__name__}({type_name(self.func_type)}"
+        rv = f"{type(self).__name__}({type_name(self.fn)}"
         argstr = ','.join(['{!r}'.format(v) for v in self.args])
         if len(argstr) > 0:
             rv += ', ' + argstr
@@ -200,8 +201,8 @@ class MemberAccessor(typing.Generic[T], IPartial[T]):
         rv += ')'
         return rv    
 
-# def ImmediateFactory(type_or_typename : type | str | None = None, *args, **kwargs):
-#     rv = Factory(type_or_typename, *args, **kwargs)
+# def ImmediateFactory(fn : type | Callable | str | None = None, *args, **kwargs):
+#     rv = Factory(fn, *args, **kwargs)
 #     rv.immediate = True
 #     return rv
 
@@ -210,8 +211,8 @@ class MemberAccessor(typing.Generic[T], IPartial[T]):
 #     if type(src) == type(dst):
 #         if isinstance(src, Factory):
 #             # FIXME - add some sort of required superclass too
-#             if src.func_type != type(None):
-#                 dst.func_type = src.func_type
+#             if src.fn != type(None):
+#                 dst.fn = src.fn
 #             #dst.args = src.args
 #             dst.kwargs = merge(dst.kwargs, src.kwargs)
 #             return dst
@@ -246,26 +247,26 @@ def typecheck(path : str, obj : typing.Any, required_type : type = typing.Any, i
 
         if not is_generic_instance(obj, required_type):           
             if not isinstance(obj, Factory):
-                #    print(f"Factory found {v.func_type}")
+                #    print(f"Factory found {v.fn}")
                 # get_config_func_options(parent_key, value) + \
                 errors += f"Config Type Mismatch: expected {type_name(required_type)} but got {type_name(type(obj))}\n in config setting `{path}` : {type_name(required_type)} = {obj}\n"
                 return errors
 
         if isinstance(obj, Factory):
             if typing.get_origin(required_type) == collections.abc.Callable and obj.immediate: # wanted a factory but got what is probably a method invocation
-                errors += f"Config Type Mismatch: expected Factory/Callable but got immediate invocation of {type_name(obj.func_type)} (did you forget to prefix this with 'lambda:'?)\n in config setting `{path}` : {type_name(required_type)} = {obj}\n"
+                errors += f"Config Type Mismatch: expected Factory/Callable but got immediate invocation of {type_name(obj.fn)} (did you forget to prefix this with 'lambda:'?)\n in config setting `{path}` : {type_name(required_type)} = {obj}\n"
                 return errors
 
-            # fill in func_type when Empty but we have a type annotation
+            # fill in fn when Empty but we have a type annotation
             # FIXME - add and check some sort of required superclass too
-            if obj.func_type == type(None):
-                obj.func_type = required_type
+            if obj.fn == type(None):
+                obj.fn = required_type
 
-            if isinstance(obj.func_type, types.FunctionType):
-                sig = inspect.signature(obj.func_type)
+            if isinstance(obj.fn, types.FunctionType):
+                sig = inspect.signature(obj.fn)
                 is_fn = True
             else:
-                sig = inspect.signature(obj.func_type.__init__)
+                sig = inspect.signature(obj.fn.__init__)
                 is_fn = False
 
             # check for missing arguments only if there's no dictionary expansion present
@@ -281,7 +282,6 @@ def typecheck(path : str, obj : typing.Any, required_type : type = typing.Any, i
                     if p.annotation is p.empty:
                         continue
 
-                    # FIXME - had to disable checking for missing config settings, because we purposely pass some manually
                     if (p.annotation != typing.Any and typing.get_origin(p.annotation) != typing.Optional):
                         if not (typing.get_origin(p.annotation) in [typing.Union, types.UnionType] and len(typing.get_args(p.annotation)) == 2 and typing.get_args(p.annotation)[1]==type(None)):
                             return f"Missing config setting `{path}.{k}` : {type_name(p.annotation)}\n"
@@ -289,7 +289,7 @@ def typecheck(path : str, obj : typing.Any, required_type : type = typing.Any, i
             # traverse all subelements recursively
             for k, v in obj.kwargs.items():
                 if k not in sig.parameters.keys():
-                    return f'Disallowed config entry `{path}.{k}` - No such parameter {k} in {obj.func_type}\n'
+                    return f'Disallowed config entry `{path}.{k}` - No such parameter {k} in {obj.fn}\n'
                 p = sig.parameters[k]
                 rt = p.annotation
                 if rt == inspect.Parameter.empty:
@@ -334,6 +334,8 @@ class ConfigParseError(Exception):
             msg += lines[lineno-1] + '\n'
             msg += ' '*node.col_offset
             msg += '^'*(end_col_offset - node.col_offset) + '\n'
+        else:
+            msg += " [NO LINE NUMBER AVAILABLE]"
         super().__init__(msg)
 
 class LocalIdentifier():
@@ -346,27 +348,36 @@ class LocalIdentifier():
 
 class ConfigParser():
     def eval_first_expr(self, unparsed_input : str):
+        self.locals = OrderedDict()
         self.unparsed_input = unparsed_input
         self.imports_map = {}
-        node = ast.parse(unparsed_input)
-        if isinstance(node, Module):
+        root = ast.parse(unparsed_input)
+        if isinstance(root, Module):
             # get the first expression in the module
-            node = node.body
-            for subnode in node:
-                if isinstance(subnode, Import):
-                    for alias in subnode.names:
+            nodes = root.body
+            for i, node in enumerate(nodes):
+                if isinstance(node, Import):
+                    for alias in node.names:
                         if alias.asname is not None:
                             self.imports_map[alias.asname] = alias.name
-                elif isinstance(subnode, ImportFrom):
-                    for alias in subnode.names:
-                        self.imports_map[alias.asname if alias.asname is not None else alias.name] = '.'.join([str(subnode.module), alias.name])
-                elif isinstance(subnode, Expr):
-                    node = subnode.value
-                    break
-        if isinstance(node, Expression):
-            node = node.body
-        self.locals = OrderedDict()
-        return self.process(node)
+                elif isinstance(node, ImportFrom):
+                    for alias in node.names:
+                        self.imports_map[alias.asname if alias.asname is not None else alias.name] = '.'.join([str(node.module), alias.name])
+                elif isinstance(node, Assign):
+                    # macro style assignments in global module scope
+                    if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
+                        raise ConfigParseError(root, self.unparsed_input, "unsupported language element: multiple or complex assignment")
+                    id = node.targets[0].id
+                    self.locals[id] = node.value
+                elif isinstance(node, Expr):
+                    if i != len(nodes)-1:
+                        raise ConfigParseError(nodes[i+1], self.unparsed_input, "configuration must not contain more elements after first top level expression")
+                    return self.process(node.value)
+                else:
+                    raise ConfigParseError(node, self.unparsed_input, f"configs do not support module-level elements of type '{type_name(type(node))}'")
+                    
+                
+        raise ConfigParseError(root, self.unparsed_input, "configuration did not contain a top level expression")
 
     def process(self, node):
         try:
@@ -450,7 +461,12 @@ class ConfigParser():
 
                     # check if it's a local
                     if id in self.locals:
-                        return LocalIdentifier(id)
+                        if isinstance(self.locals[id], expr):
+                            # it's a macro
+                            return self.process(self.locals[id])
+                        else:
+                            # it's a local identifier
+                            return LocalIdentifier(id)#self.locals[id]
 
                     fullid = self.imports_map[id] if id in self.imports_map else id
                     return IdentifierAccessor(fullid)
@@ -460,12 +476,12 @@ class ConfigParser():
                     # if len(node.args.posonlyargs) > 0 or len(node.args.args) > 0 or len(node.args.kwonlyargs) > 0:                    
                     if len(node.args.args) > 0:
                         self.locals = self.locals.copy()
-                        for arg in node.args.args: self.locals[arg.arg] = True
+                        for arg in node.args.args: self.locals[arg.arg] = True#LocalIdentifier(arg.arg)
 
                     # allows dictionary expansion args like **kwarg
                     if node.args.kwarg is not None:
                         self.locals = self.locals.copy()
-                        self.locals[node.args.kwarg.arg] = True
+                        self.locals[node.args.kwarg.arg] = True#LocalIdentifier(node.args.kwarg.arg)
 
                     if not isinstance(node.body, Call) or not isinstance(node.body.func, (Name, Attribute)):
                         raise ConfigParseError(node, self.unparsed_input, 'configuration lambda must be used to return a Factory or MemberAccessor')
@@ -549,7 +565,7 @@ class ConfigParser():
                     # was a dictonary expansion, so add special value into placeholders to signify that
                     placeholders["**"] = "**"
                 else:
-                # for now, disallow remapping of names from lambda input args to factory kwargs
+                    # for now, disallow remapping of names from lambda input args to factory kwargs
                     if value.name != str(kw.arg):
                         raise ConfigParseError(kw, self.unparsed_input, f"in configs, lambda local identifiers may only be passed to keyword arguments of the same name. Found mismatched: {kw.arg}={value.name}")
                     placeholders[kw.arg] = value
@@ -565,16 +581,16 @@ class ConfigParser():
             raise ConfigParseError(func_node, self.unparsed_input, msg = f'huh got unexpected identifier {func_ident}')
         func_name = func_ident.fullid
 
-        func_type = locate(func_name)
-        if func_type is None:
+        fn = locate(func_name)
+        if fn is None:
             raise ConfigParseError(node, self.unparsed_input, f"No such class or function found {func_name} while constructing Factory (are you missing the module name or import?)")
-        if not callable(func_type) and not isinstance(func_type, type):
+        if not callable(fn) and not isinstance(fn, type):
             raise ConfigParseError(node, self.unparsed_input, f"Factory requires a callable function or class but got: {func_name}")
 
         args, kwargs, placeholders = self.process_args_and_keywords(node_args=node_args, node_keywords=node_keywords)
 
         try:
-            rv = Factory(func_type, *args, **kwargs)
+            rv = Factory(fn, *args, **kwargs)
             rv.immediate = immediate
             rv.placeholders = placeholders
         except Exception as e:

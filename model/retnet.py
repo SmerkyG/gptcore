@@ -36,6 +36,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 import model.interface
+import model.core
 from model.hparams import HParams
 
 from util.config import Factory
@@ -279,13 +280,12 @@ class MultiScaleRetention(nn.Module):
         return output
 
 
-class MultiScaleRetentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
+class MultiScaleRetentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
     cache = None
 
-    def __init__(self, hparams : HParams, layer_id : int):
+    def __init__(self):
         super().__init__()
-        self.layer_id = layer_id
-        self.hparams = hparams
+        hparams, layer_id = self.hparams, self.layer_id
         self.recurrent_chunk_size = 128
         if MultiScaleRetentionSubLayer.cache is None:
             MultiScaleRetentionSubLayer.cache = self

@@ -63,7 +63,7 @@ class RotaryEmbedding(posemb.interface.IQueryKeyEmbedding):
             self.register_buffer('sin', sin)
             self.register_buffer('cos', cos)
 
-    def forward(self, x : Tuple[Tensor]):
+    def forward(self, x : Tuple[Tensor, Tensor]):
         q, k = x
         cache = RotaryEmbedding.cache
         cos, sin = cache.cos, cache.sin
@@ -86,6 +86,6 @@ class XPosEmbedding(posemb.interface.IQueryKeyEmbedding):
         scale = scale.repeat_interleave(2, -1) # (T, E)
         self.register_buffer('scale', scale) # (T, E)
 
-    def forward(self, x : Tuple[Tensor]):
+    def forward(self, x : Tuple[Tensor, Tensor]):
         q, k = self.rotary(x)
         return q * self.scale, k / self.scale

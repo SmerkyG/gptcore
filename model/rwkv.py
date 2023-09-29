@@ -23,7 +23,11 @@ import torch.nn.functional as F
 
 from torch import Tensor
 
+from typing import Callable, Any, Optional, Tuple, List, Iterable
+import posemb.interface
+
 import model.interface
+import model.core
 from model.hparams import HParams
 
 class RWKVConfig():
@@ -35,9 +39,10 @@ class RWKVConfig():
         self.dim_ffn=int(hparams.feedforward_d_model_ratio * hparams.d_model)
         self.dim_rk=int(hparams.d_qk_ratio * hparams.d_model)
         self.dim_v=int(hparams.d_v_ratio * hparams.d_model)
-        self.ctx_len=hparams.block_size
+        self.ctx_len=hparams.max_sequence_length
         self.head_size_divisor=8
 
+# from PaLM paper (section 5)
 class L2Wrap(torch.autograd.Function):
     @staticmethod
     def forward(ctx, loss, y):
@@ -54,9 +59,11 @@ class L2Wrap(torch.autograd.Function):
         gy.scatter_(-1, ids, maxx * factor)
         return (grad_output, gy)
         
-class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int):
+class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+    def __init__(self, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding] = Factory(model.core.NoOpModule)):
         super().__init__()
+
+        hparams, layer_id = self.hparams, self.layer_id
 
         args = RWKVConfig(hparams)
 
@@ -123,7 +130,7 @@ class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
         self.output = nn.Linear(args.dim_v, args.n_embd, bias=False)
         self.gate = nn.Linear(args.n_embd, args.dim_v, bias=False)
 
-        self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(hparams)
+        self.rotary_positional_embedding = rotary_positional_embedding_factory()
 
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_v)
 
@@ -217,10 +224,11 @@ class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
         return x
 
 
-class RWKV4_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int):
+class RWKV4_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+    def __init__(self):
         super().__init__()
 
+        hparams, layer_id = self.hparams, self.layer_id
         args = RWKVConfig(hparams)
         self.args = args
         self.layer_id = layer_id
@@ -324,9 +332,10 @@ class RWKV4_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
     #     rwkv = self.output(rwkv)
     #     return rwkv
 
-class RWKV_ChannelMixSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int):
+class RWKV_ChannelMixSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, model.core.TransformerLayerPart):
+    def __init__(self):
         super().__init__()
+        hparams, layer_id = self.hparams, self.layer_id
         args = RWKVConfig(hparams)
         self.args = args
         self.layer_id = layer_id

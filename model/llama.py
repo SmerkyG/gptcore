@@ -10,13 +10,15 @@ from torch import Tensor
 
 from util.config import Factory
 
+import model.core
 import model.interface
 from model.hparams import HParams
 
-class Llama2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer):
+class Llama2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, model.core.TransformerLayerPart):
     # SwiGLU FFN
-    def __init__(self, hparams : HParams, layer_id : int, hidden_activation_factory : Factory = Factory(nn.SiLU)):
+    def __init__(self, hidden_activation_factory : Factory = Factory(nn.SiLU)):
         super().__init__()
+        hparams, layer_id = self.hparams, self.layer_id
         d_hidden = int(hparams.d_model * hparams.feedforward_d_model_ratio)
         self.w_hidden = nn.Linear(hparams.d_model, d_hidden, bias=False)
         self.w_gate = nn.Linear(hparams.d_model, d_hidden, bias=False)
@@ -29,9 +31,10 @@ class Llama2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer)
     def forward(self, x : Tensor):
         return self.dropout(self.w_out(self.w_gate(x) * self.activation(self.w_hidden(x))))
 
-class Llama2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int, attention_factory : Factory = Factory(model.core.TorchAttention), n_kv_head : Optional[int] = None):
+class Llama2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+    def __init__(self, attention_factory : Factory = Factory(model.core.TorchAttention), n_kv_head : Optional[int] = None):
         super().__init__()
+        hparams, layer_id = self.hparams, self.layer_id
         self.hparams = hparams
         self.n_kv_head = n_kv_head if n_kv_head is not None else hparams.n_head
         base_head_size = int(hparams.d_model / hparams.n_head)

@@ -24,3 +24,9 @@ class IAttentionSubLayer():
     def __call__(self, xq : Tensor, xk : Tensor, xv : Tensor, recurrent_memory : Optional[Tensor] = None):
         raise NotImplementedError
 
+class NoOpModule(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+    
+    def forward(self, x, *args, **kwargs):
+        return x

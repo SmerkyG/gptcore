@@ -35,10 +35,10 @@ def tokenize_join_and_slice(input_batch : list[dict], tokenizer, block_size):
 
     #return dict(input_ids=input_ids)
 
-def tokenize_join_and_slice_in_context(input_batch : list[dict]):
-    if input_batch is None:
-        return None
-    return tokenize_join_and_slice(input_batch, cfgctx.tokenizer, cfgctx.block_size)
+# def tokenize_join_and_slice_in_context(input_batch : list[dict]):
+#     if input_batch is None:
+#         return None
+#     return tokenize_join_and_slice(input_batch, cfgctx.tokenizer, cfgctx.block_size)
 
 class Callable():
     def __call__(self, *args, **kwargs):
@@ -52,10 +52,11 @@ class TokenizeMergeAndSplit(Callable):
         self.block_size = block_size
 
     def forward(self, dataset):
-        return dataset.map(lambda x: tokenize_merge_and_split(x, self.tokenizer, self.block_size))#, batched=True, remove_columns=dataset.column_names)
+        return dataset.map(lambda x: tokenize_join_and_slice(x, self.tokenizer, self.block_size))#, batched=True, remove_columns=dataset.column_names)
 
 # def split_max_tokens_fn(data, tokenizer, max_tokens):
 #     temp_max_length = getattr(tokenizer, 'model_max_length', None)
 #     tokenizer.model_max_length=int(1e30) # to avoid warnings when tokenizing long strings
 #     toks = tokenizer(data['text'])['input_ids']
 #     return [toks[i*max_tokens:(i+1)*max_tokens] for i in range(len(toks) // max_tokens)]
+
