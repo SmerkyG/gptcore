@@ -23,7 +23,7 @@ LOG_NAME = 'Hyena L12D768H12CM2Adam'
 
 cli.Config(
     seed_everything = 1337,
-    compile = True,
+    compile = False, # torch.compile does not work with complex tensors, which are used for the FFT
 
     model_factory = lambda: model.core.Decoder(
         hparams = model.hparams.HParams(
