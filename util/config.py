@@ -59,6 +59,7 @@ class Factory(typing.Generic[T], IPartial[T]):
     def __init__(self, fn : typing.Union[type, typing.Callable, str, None] = None, *args, **kwargs):
         super().__init__(False)
         self.placeholders = {}
+        self.positional_placeholders_count = 0
 
         if isinstance(fn, str):
             self.fn = locate(fn)
@@ -149,8 +150,9 @@ class IdentifierAccessor(typing.Generic[T], IPartial[T]):
         return f"{type(self).__name__}({self.fullid})"
 
 class MemberAccessor(typing.Generic[T], IPartial[T]):
-    def __init__(self, member_name : str, inner_ipartial : IPartial[T], is_call:bool = False, immediate:bool = True, placeholders = {}, *args, **kwargs):
+    def __init__(self, member_name : str, inner_ipartial : IPartial[T], is_call:bool = False, immediate:bool = True, positional_placeholders_count=0, placeholders = {}, *args, **kwargs):
         super().__init__(immediate)
+        self.positional_placeholders_count = positional_placeholders_count
         self.placeholders = placeholders
 
         self.inner_ipartial = inner_ipartial
@@ -264,14 +266,24 @@ def typecheck(path : str, obj : typing.Any, required_type : type = typing.Any, i
 
             if isinstance(obj.fn, types.FunctionType):
                 sig = inspect.signature(obj.fn)
-                is_fn = True
+                is_init_fn = False
             else:
                 sig = inspect.signature(obj.fn.__init__)
-                is_fn = False
+                is_init_fn = True
 
             # check for missing arguments only if there's no dictionary expansion present
             if "**" not in obj.placeholders:
+                arg_index = -1
                 for k, p in sig.parameters.items():
+                    # skip check for 'self' for member functions
+                    if k == 'self':
+                        continue
+
+                    arg_index += 1
+
+                    if arg_index < obj.positional_placeholders_count:
+                        continue
+
                     #if kind in (_POSITIONAL_ONLY, _POSITIONAL_OR_KEYWORD):
                     if k in obj.kwargs or k in obj.placeholders:
                         continue
@@ -349,6 +361,7 @@ class LocalIdentifier():
 class ConfigParser():
     def eval_first_expr(self, unparsed_input : str):
         self.locals = OrderedDict()
+        self.macros = OrderedDict()
         self.unparsed_input = unparsed_input
         self.imports_map = {}
         root = ast.parse(unparsed_input)
@@ -368,7 +381,7 @@ class ConfigParser():
                     if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
                         raise ConfigParseError(root, self.unparsed_input, "unsupported language element: multiple or complex assignment")
                     id = node.targets[0].id
-                    self.locals[id] = node.value
+                    self.macros[id] = node.value
                 elif isinstance(node, Expr):
                     if i != len(nodes)-1:
                         raise ConfigParseError(nodes[i+1], self.unparsed_input, "configuration must not contain more elements after first top level expression")
@@ -459,14 +472,14 @@ class ConfigParser():
                 case Name():
                     id = node.id
 
+                    # check if it's a macro
+                    if id in self.macros:
+                        return self.process(self.macros[id])
+
                     # check if it's a local
                     if id in self.locals:
-                        if isinstance(self.locals[id], expr):
-                            # it's a macro
-                            return self.process(self.locals[id])
-                        else:
-                            # it's a local identifier
-                            return LocalIdentifier(id)#self.locals[id]
+                        # it's a local identifier
+                        return LocalIdentifier(id)
 
                     fullid = self.imports_map[id] if id in self.imports_map else id
                     return IdentifierAccessor(fullid)
@@ -490,9 +503,9 @@ class ConfigParser():
                     node = node.body
                     if isinstance(node.func, Attribute) and isinstance(node.func.value, Call):
                         # create MemberAccessor
-                        args, kwargs, placeholders = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
+                        positional_placeholders_count, placeholders, args, kwargs = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
                         #print("CAPTURING MemberAccess ", node.func.attr, placeholders, args, kwargs)
-                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, immediate=False, placeholders=placeholders, *args, **kwargs)
+                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, immediate=False, positional_placeholders_count=positional_placeholders_count, placeholders=placeholders, *args, **kwargs)
                     else:
                         # create Factory
                         rv = self.create_factory(node, node.args, node.keywords, immediate=False)
@@ -505,9 +518,9 @@ class ConfigParser():
                         #print(ast.dump(node))
                         #print()
                         # create MemberAccessor
-                        args, kwargs, placeholders = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
+                        positional_placeholders_count, placeholders, args, kwargs = self.process_args_and_keywords(node_args=node.args, node_keywords=node.keywords)
                         #print("CAPTURING CallMemberAccess ", node.func.attr, placeholders, args, kwargs)
-                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, immediate=True, placeholders=placeholders, *args, **kwargs)
+                        return MemberAccessor(member_name=node.func.attr, inner_ipartial=self.process(node.func.value), is_call=True, immediate=True, positional_placeholders_count=positional_placeholders_count, placeholders=placeholders, *args, **kwargs)
 
                     if isinstance(node.func, (Name, Attribute)):
                         ident = self.process(node.func)
@@ -538,16 +551,20 @@ class ConfigParser():
         raise ConfigParseError(node, self.unparsed_input, msg = 'unsupported language element')
     
     def process_args_and_keywords(self, node_args, node_keywords):
-        args = list([self.process(a) for a in node_args])
-        locals_list = list(self.locals.keys())
-        for i, value in enumerate(args):
-            if not isinstance(value, LocalIdentifier):
-                break
-            else:
+        positional_placeholders_count = 0
+        args = []
+        locals_list = None
+        for i, value in enumerate(map(self.process, node_args)):
+            if isinstance(value, LocalIdentifier):
+                if locals_list is None:
+                    locals_list = list(self.locals.keys())
                 if len(self.locals) <= i:
                     raise ConfigParseError(node_args[i], self.unparsed_input, f"in configs, lambda local identifiers may only be passed to positional arguments in the order they came into the lambda. '{value.name}' came after all locals were exhausted")
                 elif value.name != locals_list[i]:
                     raise ConfigParseError(node_args[i], self.unparsed_input, f"in configs, lambda local identifiers may only be passed to positional arguments in the order they came into the lambda. '{value.name}' should be '{locals_list[i]}'")
+                positional_placeholders_count += 1
+            else:
+                args.append(value)
 
         kwargs = {}
         placeholders = {}
@@ -572,7 +589,7 @@ class ConfigParser():
             else:
                 kwargs[kw.arg] = value
         
-        return args, kwargs, placeholders
+        return positional_placeholders_count, placeholders, args, kwargs
 
     def create_factory(self, node, node_args, node_keywords, immediate:bool):
         func_node = node.func
@@ -587,12 +604,13 @@ class ConfigParser():
         if not callable(fn) and not isinstance(fn, type):
             raise ConfigParseError(node, self.unparsed_input, f"Factory requires a callable function or class but got: {func_name}")
 
-        args, kwargs, placeholders = self.process_args_and_keywords(node_args=node_args, node_keywords=node_keywords)
+        positional_placeholders_count, placeholders, args, kwargs = self.process_args_and_keywords(node_args=node_args, node_keywords=node_keywords)
 
         try:
             rv = Factory(fn, *args, **kwargs)
             rv.immediate = immediate
             rv.placeholders = placeholders
+            rv.positional_placeholders_count = positional_placeholders_count
         except Exception as e:
             raise ConfigParseError(node, self.unparsed_input, str(e)) from None
         return rv
