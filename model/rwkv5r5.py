@@ -39,7 +39,7 @@ class RWKVConfig():
         self.head_size_divisor=8
 
 class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, hparams : HParams, layer_id : int):
+    def __init__(self, chunk_len : int = 128, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding] = Factory(model.core.NoOpModule)):
         super().__init__()
 
         args = RWKVConfig(hparams)
@@ -55,7 +55,7 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
         assert args.dim_rk % self.n_head == 0
         assert args.dim_v % self.n_head == 0
 
-        self.chunk_len = 128#512
+        self.chunk_len = chunk_len
         assert self.ctx_len % self.chunk_len == 0
 
         with torch.no_grad():
@@ -95,7 +95,7 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
         self.output = nn.Linear(args.dim_v, args.n_embd, bias=False)
         self.gate = nn.Linear(args.n_embd, args.dim_v, bias=False)
 
-        self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(hparams)
+        self.rotary_positional_embedding = rotary_positional_embedding_factory()
 
         self.ln_x = nn.GroupNorm(self.n_head, args.dim_v)
 

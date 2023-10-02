@@ -60,7 +60,7 @@ class L2Wrap(torch.autograd.Function):
         return (grad_output, gy)
         
 class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
-    def __init__(self, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding] = Factory(model.core.NoOpModule)):
+    def __init__(self, chunk_len : int = 128, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding] = Factory(model.core.NoOpModule)):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id
@@ -78,7 +78,7 @@ class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, mod
         assert args.dim_rk % self.n_head == 0
         assert args.dim_v % self.n_head == 0
 
-        self.chunk_len = 128#512
+        self.chunk_len = chunk_len
         assert self.ctx_len % self.chunk_len == 0
 
         with torch.no_grad():
