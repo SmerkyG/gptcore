@@ -278,8 +278,10 @@ class Unembedding(nn.Module):
         return F.linear(x, self.weight)
 
 class Transformer(nn.Module):
-    def __init__(self, hparams : HParams, 
+    def __init__(self, 
+                 hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding] = Factory(NoOpModule),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
