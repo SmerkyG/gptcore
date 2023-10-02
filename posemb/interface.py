@@ -4,13 +4,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-class IPositionalEmbedding(nn.Module):
-    def __init__(self):
-        super().__init__()
-    def forward(self, x : Tuple[Tensor]): pass
+class IPositionalEmbedding():
+    def forward(self, x : Tuple[Tensor, Tensor]): pass
 
-class IQueryKeyEmbedding(nn.Module):
-    def __init__(self):
-        super().__init__()
-    def forward(self, x : Tuple[Tensor]): pass
+class IQueryKeyEmbedding():
+    def forward(self, x : Tuple[Tensor, Tensor]): pass
 

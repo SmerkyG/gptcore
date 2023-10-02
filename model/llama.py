@@ -75,8 +75,7 @@ class Llama2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, mod
         v = v.view(B, T, VH, V).transpose(1, 2) # (B, VH, T, V)
 
         # rotate queries and keys via RoPE / XPos
-        q = self.rotary_positional_embedding(q)
-        k = self.rotary_positional_embedding(k)
+        q, k = self.rotary_positional_embedding((q, k))
 
         # support for grouped-query attention
         # if there are fewer k/v heads than total heads, repeat them until the number matches

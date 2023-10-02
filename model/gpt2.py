@@ -74,8 +74,7 @@ class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model
         v = v.view(B, T, H, V).transpose(1, 2) # (B, H, T, V)
 
         # rotate queries and keys via RoPE / XPos
-        q = self.rotary_positional_embedding(q)
-        k = self.rotary_positional_embedding(k)
+        q, k = self.rotary_positional_embedding((q, k))
 
         y = self.attention_module(q, k, v, recurrent_memory) # (B, H, T, V)
 

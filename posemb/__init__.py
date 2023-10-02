@@ -21,8 +21,6 @@ class SinPositionalEmbedding(posemb.interface.IPositionalEmbedding):
         super().__init__()
 
         if SinPositionalEmbedding.cache is None:
-            SinPositionalEmbedding.cache = self
-
             # we flip here so that in case the user wants to extend the sequence length, tokens in the original zone end up with the same values
             indices = torch.arange(sequence_length).flip(-1).unsqueeze(1)
             freqs = 1e-4 ** (torch.linspace(0, -1, d_model//2)) # frequencies from 1.0 ... 1e-4
@@ -30,6 +28,8 @@ class SinPositionalEmbedding(posemb.interface.IPositionalEmbedding):
             s, c = angles.sin(), angles.cos()
             # interleave sines and cosines
             self.register_buffer('positional_embedding', torch.stack((s, c), dim=-1).flatten(-2)) # (T, C)
+
+            SinPositionalEmbedding.cache = self
 
     def forward(self, x : Tensor):
         B, T, C = x.size()
@@ -51,17 +51,17 @@ def rotary_embedding(Q, T):
     angles = indices * angular_velocity
     return angles.sin(), angles.cos()
 
-class RotaryEmbedding(posemb.interface.IQueryKeyEmbedding):
+class RotaryEmbedding(nn.Module, posemb.interface.IQueryKeyEmbedding):
     # using first instance as a cache so we don't waste memory by duplicating our registered buffers per layer
     cache = None
     def __init__(self, sequence_length : int, d_query : int):
         super().__init__()
 
         if RotaryEmbedding.cache is None:
-            RotaryEmbedding.cache = self
             sin, cos = rotary_embedding(d_query, sequence_length)
             self.register_buffer('sin', sin)
             self.register_buffer('cos', cos)
+            RotaryEmbedding.cache = self
 
     def forward(self, x : Tuple[Tensor, Tensor]):
         q, k = x
@@ -69,7 +69,7 @@ class RotaryEmbedding(posemb.interface.IQueryKeyEmbedding):
         cos, sin = cache.cos, cache.sin
         return rot2d_interleaved(cos, sin, q), rot2d_interleaved(cos, sin, k)
 
-class XPosEmbedding(posemb.interface.IQueryKeyEmbedding):
+class XPosEmbedding(nn.Module, posemb.interface.IQueryKeyEmbedding):
     def __init__(self, sequence_length : int, d_query : int):
         super().__init__()
         Q = d_query

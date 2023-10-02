@@ -119,8 +119,7 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
         v = self.value(xv).view(B, TT, self.n_head, self.v_head_size).transpose(1, 2)                 # BTC -> BHTS
         g = F.silu(self.gate(xg))
         
-        r = self.rotary_positional_embedding(r)
-        k = self.rotary_positional_embedding(k)
+        r, k = self.rotary_positional_embedding((r, k))
 
         k = k.transpose(-2, -1) # BHTS -> BHST
 
