@@ -359,7 +359,7 @@ class LocalIdentifier():
         return f"LocalIdentifier('{self.name}')"
 
 class ConfigParser():
-    def eval_first_expr(self, unparsed_input : str):
+    def eval_first_expr(self, unparsed_input : str, incoming_macros : dict):
         self.locals = OrderedDict()
         self.macros = OrderedDict()
         self.unparsed_input = unparsed_input
@@ -381,10 +381,21 @@ class ConfigParser():
                     if len(node.targets) != 1 or not isinstance(node.targets[0], Name):
                         raise ConfigParseError(root, self.unparsed_input, "unsupported language element: multiple or complex assignment")
                     id = node.targets[0].id
-                    self.macros[id] = node.value
+                    if id in incoming_macros:
+                        parsed_macro = ast.parse(incoming_macros[id])
+                        if not isinstance(parsed_macro, Module) or len(parsed_macro.body) == 0:
+                            raise ConfigParseError(parsed_macro, incoming_macros[id], f"error parsing - commandline macro value for '{id}'")
+                        if not isinstance(parsed_macro.body[0], Expr):
+                            raise ConfigParseError(parsed_macro.body, incoming_macros[id], f"error parsing - commandline macro value for '{id}' was not an expression")
+                        self.macros[id] = parsed_macro.body[0].value
+                    else:
+                        self.macros[id] = node.value
                 elif isinstance(node, Expr):
                     if i != len(nodes)-1:
                         raise ConfigParseError(nodes[i+1], self.unparsed_input, "configuration must not contain more elements after first top level expression")
+                    for key in incoming_macros.keys():
+                        if key not in self.macros:
+                            raise ConfigParseError(root, self.unparsed_input, f"'{key}' not found in config globals\nglobal values set via commandline must override existing globals set in the config")
                     return self.process(node.value)
                 else:
                     raise ConfigParseError(node, self.unparsed_input, f"configs do not support module-level elements of type '{type_name(type(node))}'")
@@ -615,5 +626,5 @@ class ConfigParser():
             raise ConfigParseError(node, self.unparsed_input, str(e)) from None
         return rv
 
-def eval_first_expr(input : str):
-    return ConfigParser().eval_first_expr(input)
+def eval_first_expr(unparsed_input : str, incoming_macros : dict):
+    return ConfigParser().eval_first_expr(unparsed_input, incoming_macros)
