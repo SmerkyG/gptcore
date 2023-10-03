@@ -25,9 +25,9 @@ class SinPositionalEmbedding(posemb.interface.IPositionalEmbedding):
             indices = torch.arange(sequence_length).flip(-1).unsqueeze(1)
             freqs = 1e-4 ** (torch.linspace(0, -1, d_model//2)) # frequencies from 1.0 ... 1e-4
             angles = (indices * freqs)
-            s, c = angles.sin(), angles.cos()
             # interleave sines and cosines
-            self.register_buffer('positional_embedding', torch.stack((s, c), dim=-1).flatten(-2)) # (T, C)
+            emb = torch.stack((angles.sin(), angles.cos()), dim=-1).flatten(-2)
+            self.register_buffer('positional_embedding', emb, persistent=False) # (T, C)
 
             SinPositionalEmbedding.cache = self
 
@@ -35,7 +35,8 @@ class SinPositionalEmbedding(posemb.interface.IPositionalEmbedding):
         B, T, C = x.size()
 
         cache = SinPositionalEmbedding.cache
-        return x + cache.positional_embedding[-T:,:]
+        # annoyingly, we have to cast to x.dtype here because AMP doesn't work during __init__ leaving our buffers as float32's
+        return x + cache.positional_embedding[-T:,:].to(x.dtype)
 
 def rot2d_interleaved(cos, sin, t):
     # creates tensor with perpendicular (x,y) -> (-y,x) taken of last dimension, if you treat every two consecutive entries as (x,y)
@@ -59,14 +60,15 @@ class RotaryEmbedding(nn.Module, posemb.interface.IQueryKeyEmbedding):
 
         if RotaryEmbedding.cache is None:
             sin, cos = rotary_embedding(d_query, sequence_length)
-            self.register_buffer('sin', sin)
-            self.register_buffer('cos', cos)
+            self.register_buffer('sin', sin, persistent=False)
+            self.register_buffer('cos', cos, persistent=False)
             RotaryEmbedding.cache = self
 
     def forward(self, x : Tuple[Tensor, Tensor]):
         q, k = x
         cache = RotaryEmbedding.cache
-        cos, sin = cache.cos, cache.sin
+        # annoyingly, we have to cast to x.dtype here because AMP doesn't work during __init__ leaving our buffers as float32's
+        cos, sin = cache.cos.to(q.dtype), cache.sin.to(k.dtype)
         return rot2d_interleaved(cos, sin, q), rot2d_interleaved(cos, sin, k)
 
 class XPosEmbedding(nn.Module, posemb.interface.IQueryKeyEmbedding):
@@ -84,8 +86,9 @@ class XPosEmbedding(nn.Module, posemb.interface.IQueryKeyEmbedding):
         # multiplying a horizontal embed_index_scales vector (via exponentiation) with a vertical set of remapped sequence indices [-1/256...1/256]
         scale = embed_index_scales ** remapped_seq_positions.reshape(-1, 1) # (T, F)
         scale = scale.repeat_interleave(2, -1) # (T, E)
-        self.register_buffer('scale', scale) # (T, E)
+        self.register_buffer('scale', scale, persistent=False) # (T, E)
 
     def forward(self, x : Tuple[Tensor, Tensor]):
         q, k = self.rotary(x)
-        return q * self.scale, k / self.scale
+        # annoyingly, we have to cast to x.dtype here because AMP doesn't work during __init__ leaving our buffers as float32's
+        return q * self.scale.to(q.dtype), k / self.scale.to(k.dtype)
