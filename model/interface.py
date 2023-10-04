@@ -6,6 +6,15 @@ from torch import Tensor
 
 import abc
 
+class IModule():
+    @abc.abstractmethod
+    def forward(self, x : Any):
+        raise NotImplementedError
+    
+    @abc.abstractmethod
+    def __call__(self, x : Any):
+        raise NotImplementedError
+
 class IFeedForwardSubLayer():
     @abc.abstractmethod
     def forward(self, x:Tensor):
