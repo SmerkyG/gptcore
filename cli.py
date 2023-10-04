@@ -65,12 +65,13 @@ def cli():
     errors = ''
 
     macros = {}
-    for macro_str in args.set:
-        parts = macro_str.split("=")
-        if len(parts) != 2 or len(parts[0])==0 or len(parts[1])==0:
-            print(f'commandline argument not specified correctly e.g. -s NAME=\'John\'\nGot: {macro_str}')
-            return
-        macros[parts[0]] = parts[1]
+    if args.set is not None:
+        for macro_str in args.set:
+            parts = macro_str.split("=")
+            if len(parts) != 2 or len(parts[0])==0 or len(parts[1])==0:
+                print(f'commandline argument not specified correctly e.g. -s NAME=\'John\'\nGot: {macro_str}')
+                return
+            macros[parts[0]] = parts[1]
 
     with open(args.config, mode="rt", encoding="utf-8") as f:
         disk_cfg_str = f.read()

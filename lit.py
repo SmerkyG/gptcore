@@ -75,7 +75,6 @@ class LightningMetaTrainer(cli.ITrainer):
             train_dataset : torch.utils.data.Dataset = self.train_dataset_factory()
             val_dataset : torch.utils.data.Dataset = self.val_dataset_factory()
 
-            # FIXME - batch_size = cfg.batch_size, 
             # FIXME - deal with collate_fn elsewhere
             train_loader : torch.utils.data.DataLoader = self.train_dataloader_factory(dataset = train_dataset, collate_fn=collate_target_tokens_offset_by_one)
             val_loader : torch.utils.data.DataLoader = self.val_dataloader_factory(dataset = val_dataset, collate_fn=collate_target_tokens_offset_by_one)
@@ -93,11 +92,11 @@ class LightningMetaTrainer(cli.ITrainer):
                 print("Testing complete!")
 
         trainer : lightning.Trainer = self.lightning_trainer_factory(num_sanity_val_steps=0)#, enable_progress_bar=False)#num_sanity_val_steps=1)
-        if cfg.compile:
-            try:
-                lightning_model.model = torch.compile(lightning_model.model)
-            except Exception as e:
-                print(f"Skipping torch.compile due to error: {e}")
+        # if cfg.compile:
+        #     try:
+        #         lightning_model.model = torch.compile(lightning_model.model)
+        #     except Exception as e:
+        #         print(f"Skipping torch.compile due to error: {e}")
 
         # #torch._dynamo.config.verbose=True
         trainer.fit(lightning_model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=self.ckpt_path)

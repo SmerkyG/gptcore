@@ -29,5 +29,4 @@ class HParams():
    
     dropout : float = 0.0   # dropout is more useful for finetuning than pretraining
 
-    positional_embedding_factory : Callable[..., IPositionalEmbedding] = field_default(lambda: Factory(NoOpModule))
-    rotary_positional_embedding_factory : Callable[..., IQueryKeyEmbedding] = field_default(lambda: Factory(NoOpModule))
+    rotary_positional_embedding_factory : Callable[..., IQueryKeyEmbedding | NoOpModule] = field_default(lambda: Factory(NoOpModule))

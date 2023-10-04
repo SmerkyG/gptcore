@@ -1,23 +1,18 @@
 import torch
 import torch.utils.data
 import lightning.pytorch.loggers
-import optimizer
-from util.config import Factory
 import lightning.pytorch.callbacks
 import lightning.pytorch.strategies
-import datasets
 import transformers
 import dataset
-import model
 import model.hparams
-import mask
 import cli
 import dataset.tokenizer
 import lit
+import norm
 
-import posemb
 import model.core
-import model.gpt2
+import posemb
 
 BATCH_SIZE = 8
 VOCAB_SIZE = 50304
@@ -25,7 +20,7 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained('gpt2')
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'GPT2 L12D768H12CM2Adam'
+LOG_NAME = 'GPTAlpha L12D768H12CM2Adam'
 
 cli.Config(
     seed_everything = 1337,
@@ -40,15 +35,29 @@ cli.Config(
             n_head=12,
             d_model=768,
 
-            feedforward_d_model_ratio=4,
+            dropout=0,
+            
+            feedforward_d_model_ratio=1.5,
 
-            d_v_ratio=1,
+            d_v_ratio=2,
+
+            rotary_positional_embedding_factory = lambda sequence_length, d_query: posemb.RotaryEmbedding(sequence_length, d_query),
         ),
-        positional_embedding_factory = lambda **kwargs: posemb.LearnedPositionalEmbedding(**kwargs),
+        embedding_norm_factory=lambda dim: norm.RMSNorm(dim, weight_scaling=False),
+        positional_embedding_factory=lambda:model.core.NoOpModule(),
+        share_embedding_weights=True,
         layer_factory=lambda: model.core.TransformerLayer(
-            self_attention_sublayer_factory = lambda: model.gpt2.GPT2AttentionSubLayer(),
-            feedforward_sublayer_factory = lambda: model.gpt2.GPT2FeedForwardSubLayer(),
+            self_attention_sublayer_factory = lambda: model.core.AttentionSubLayer(
+                attention_factory = lambda: model.core.TorchAttention(bias_mask_factory=None),
+                qkv_norm_factory = lambda dim: norm.RMSNorm(dim, weight_scaling=False),
+                time_mixer_factory = lambda: model.core.TimeLerp(),
+            ),
+            feedforward_sublayer_factory = lambda: model.core.RWKVFeedForwardSubLayer(),
+            residual_op_factory = lambda: model.core.ResidualMixOp(
+                sublayer_norm_factory = lambda dim: norm.RMSNorm(dim, weight_scaling = False)
+            )
         ),
+        final_norm_factory=lambda dim: norm.RMSNorm(dim, weight_scaling=False),
     ),
 
     trainer_factory = lambda: lit.LightningMetaTrainer(
@@ -80,3 +89,4 @@ cli.Config(
         ),
     ),
 )
+

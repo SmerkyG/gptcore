@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 
 class IPositionalEmbedding():
-    def forward(self, x : Tuple[Tensor, Tensor]): pass
+    def forward(self, x : Tensor): pass
 
 class IQueryKeyEmbedding():
     def forward(self, x : Tuple[Tensor, Tensor]): pass

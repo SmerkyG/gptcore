@@ -239,7 +239,7 @@ class ResidualMixOp(nn.Module, IResidualOp, TransformerLayerPart):
 class TransformerLayer(nn.Module, TransformerLayerPart):
     def __init__(self,  
                  self_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer] = Factory(AttentionSubLayer),
-                 cross_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer] = Factory(NoOpModule),
+                 cross_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer | NoOpModule] = Factory(NoOpModule),
                  feedforward_sublayer_factory : Callable[..., model.interface.IFeedForwardSubLayer] = Factory(RWKVFeedForwardSubLayer),
                  residual_op_factory : Callable[..., IResidualOp] = Factory(ResidualMixOp, sublayer_norm_factory = Factory(norm.RMSNorm, weight_scaling = False)),
                  ):
@@ -281,7 +281,7 @@ class Transformer(nn.Module):
     def __init__(self, 
                  hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
-                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding] = Factory(NoOpModule),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | NoOpModule] = Factory(NoOpModule),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
@@ -376,7 +376,7 @@ class Encoder(Transformer, IEncoderDecoder):
 class Decoder(Transformer, IEncoderDecoder):
     def __init__(self, hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
-                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding] = Factory(NoOpModule),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | NoOpModule] = Factory(NoOpModule),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
@@ -390,7 +390,7 @@ class Decoder(Transformer, IEncoderDecoder):
 class EncoderDecoder(nn.Module, IEncoderDecoder):
     def __init__(self, hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
-                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding] = Factory(NoOpModule),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | NoOpModule] = Factory(NoOpModule),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
