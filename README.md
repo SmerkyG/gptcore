@@ -156,7 +156,9 @@ We adopt most of the practices from the RWKV channel mix feed forward network. T
 #### Residual Mixing [self-citation](https://github.com/SmerkyG/gptcore)
 Sublayers (attention and feed forward) are mixed with the residual using a learned vector ratio L via `L*residual+(2-L)*value`. We find this has slightly better results and costs very little to evaluate.
 #### No bias [citation](https://arxiv.org/abs/2212.14034)
-Only weights, and no bias is used throughout the model
+Linear layers contain only weights without biases throughout the model
+#### Sequence Packing [citation](https://arxiv.org/abs/1910.10683)
+Sequences in the training data that do not reach the end of the sequence length buffer are packed together instead of padded to the end, so that every token examined is useful for learning instead of large numbers of padding tokens becoming a waste of compute.
 
 ## Roadmap
 
