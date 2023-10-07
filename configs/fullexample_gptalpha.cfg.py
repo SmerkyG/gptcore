@@ -44,7 +44,7 @@ cli.Config(
             rotary_positional_embedding_factory = lambda sequence_length, d_query: posemb.RotaryEmbedding(sequence_length, d_query),
         ),
         embedding_norm_factory=lambda dim: norm.RMSNorm(dim, weight_scaling=False),
-        positional_embedding_factory=lambda:model.core.NoOpModule(),
+        positional_embedding_factory=lambda:torch.nn.Identity(),
         share_embedding_weights=True,
         layer_factory=lambda: model.core.TransformerLayer(
             self_attention_sublayer_factory = lambda: model.core.AttentionSubLayer(
@@ -79,6 +79,8 @@ cli.Config(
                 #lightning.pytorch.loggers.CSVLogger(save_dir="."),
                 #lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
             ],
+            callbacks = [
+            ],            
         ),
         datamodule_factory=lambda: dataset.DM(
             dataset_path='dataset/pile.py', 

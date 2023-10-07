@@ -1,9 +1,11 @@
+import torch.nn as nn
+
 from dataclasses import dataclass, field
 
 from functools import partial
 
 from posemb.interface import IPositionalEmbedding, IQueryKeyEmbedding
-from model.interface import IFeedForwardSubLayer, IAttentionSubLayer, NoOpModule
+from model.interface import IFeedForwardSubLayer, IAttentionSubLayer
 
 from typing import Callable, Any
 
@@ -29,4 +31,4 @@ class HParams():
    
     dropout : float = 0.0   # dropout is more useful for finetuning than pretraining
 
-    rotary_positional_embedding_factory : Callable[..., IQueryKeyEmbedding | NoOpModule] = field_default(lambda: Factory(NoOpModule))
+    rotary_positional_embedding_factory : Callable[..., IQueryKeyEmbedding | nn.Identity] = field_default(lambda: Factory(nn.Identity))

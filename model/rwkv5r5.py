@@ -13,7 +13,7 @@ You may obtain a copy of the License at
 
 from util.config import Factory
 
-from typing import Any, Optional, Tuple, List, Iterable
+from typing import Callable, Any, Optional, Tuple, List, Iterable, Callable
 
 import math
 
@@ -23,8 +23,12 @@ import torch.nn.functional as F
 
 from torch import Tensor
 
+import posemb.interface
+
 import model.interface
+import model.core
 from model.hparams import HParams
+
 
 class RWKVConfig():
     def __init__(self, hparams : HParams):
@@ -35,12 +39,14 @@ class RWKVConfig():
         self.dim_ffn=int(hparams.feedforward_d_model_ratio * hparams.d_model)
         self.dim_rk=int(hparams.d_qk_ratio * hparams.d_model)
         self.dim_v=int(hparams.d_v_ratio * hparams.d_model)
-        self.ctx_len=hparams.block_size
+        self.ctx_len=hparams.max_sequence_length
         self.head_size_divisor=8
 
-class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer):
-    def __init__(self, chunk_len : int = 128, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding] = Factory(model.core.NoOpModule)):
+class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+    def __init__(self, chunk_len : int = 128, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
         super().__init__()
+
+        hparams, layer_id = self.hparams, self.layer_id
 
         args = RWKVConfig(hparams)
 

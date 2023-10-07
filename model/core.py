@@ -19,8 +19,6 @@ import norm
 import model.interface
 import posemb.interface
 
-from model.interface import NoOpModule
-
 from model.hparams import HParams
 
 #import torch._dynamo
@@ -239,7 +237,7 @@ class ResidualMixOp(nn.Module, IResidualOp, TransformerLayerPart):
 class TransformerLayer(nn.Module, TransformerLayerPart):
     def __init__(self,  
                  self_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer] = Factory(AttentionSubLayer),
-                 cross_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer | NoOpModule] = Factory(NoOpModule),
+                 cross_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer | nn.Identity] = Factory(nn.Identity),
                  feedforward_sublayer_factory : Callable[..., model.interface.IFeedForwardSubLayer] = Factory(RWKVFeedForwardSubLayer),
                  residual_op_factory : Callable[..., IResidualOp] = Factory(ResidualMixOp, sublayer_norm_factory = Factory(norm.RMSNorm, weight_scaling = False)),
                  ):
@@ -259,7 +257,8 @@ class TransformerLayer(nn.Module, TransformerLayerPart):
         x = self.self_attention_resop(x, self_attn) # this code looks a little complicated, but it's just allowing us to swap out whether we add or mix the residual
 
         # optional cross attention (query is based on the current input, but key and value are based on the encoder's output)
-        if encoder_output is not None:
+        # NOTE - we check against nn.Identity because the normal nn.Identity module does not allow extra arguments passed, though our interface.Identity version does
+        if encoder_output is not None and not isinstance(self.cross_attention_sublayer, nn.Identity):
             cross_attn = lambda y: self.cross_attention_sublayer(y, encoder_output, encoder_output, layer_recurrent_memory)
             x = self.cross_attention_resop(x, cross_attn)
 
@@ -281,7 +280,7 @@ class Transformer(nn.Module):
     def __init__(self, 
                  hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
-                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | NoOpModule] = Factory(NoOpModule),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | nn.Identity] = Factory(nn.Identity),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
@@ -307,7 +306,7 @@ class Transformer(nn.Module):
         #self.layers = nn.Sequential(*[layer_factory() for i in range(hparams.n_layer)])
 
         if share_embedding_weights:
-            self.final_norm = NoOpModule()
+            self.final_norm = nn.Identity()
             self.unembed = Unembedding(self.embed.weight)
         else:
             self.final_norm = final_norm_factory(hparams.d_model)
@@ -355,14 +354,14 @@ class IEncoderDecoder():
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
     def encode(self, x :Tensor):
-        raise Exception("Unimplemented")
-    def decode(self, x : Tensor):
-        raise Exception("Unimplemented")
+        raise NotImplementedError()
+    def decode(self, x : Tensor, encoder_output : Tensor | None = None, recurrent_memory : Optional[list[Tensor]] = None):
+        raise NotImplementedError()
 
 class Encoder(Transformer, IEncoderDecoder):
     def __init__(self, hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
-                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding] = Factory(NoOpModule),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | nn.Identity] = Factory(nn.Identity),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
@@ -376,7 +375,7 @@ class Encoder(Transformer, IEncoderDecoder):
 class Decoder(Transformer, IEncoderDecoder):
     def __init__(self, hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
-                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | NoOpModule] = Factory(NoOpModule),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | nn.Identity] = Factory(nn.Identity),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
@@ -390,7 +389,7 @@ class Decoder(Transformer, IEncoderDecoder):
 class EncoderDecoder(nn.Module, IEncoderDecoder):
     def __init__(self, hparams : HParams, 
                  embedding_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),
-                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | NoOpModule] = Factory(NoOpModule),
+                 positional_embedding_factory : Callable[..., posemb.interface.IPositionalEmbedding | nn.Identity] = Factory(nn.Identity),
                  layer_factory : Callable[..., nn.Module] = Factory(TransformerLayer),
                  share_embedding_weights : bool = True,
                  final_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling=False),

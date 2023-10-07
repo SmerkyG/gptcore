@@ -13,7 +13,7 @@ You may obtain a copy of the License at
 
 from util.config import Factory
 
-from typing import Any, Optional, Tuple, List, Iterable
+from typing import Callable, Any, Optional, Tuple, List, Iterable, Callable
 
 import math
 
@@ -23,7 +23,6 @@ import torch.nn.functional as F
 
 from torch import Tensor
 
-from typing import Callable, Any, Optional, Tuple, List, Iterable
 import posemb.interface
 
 import model.interface
@@ -60,7 +59,7 @@ class L2Wrap(torch.autograd.Function):
         return (grad_output, gy)
         
 class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
-    def __init__(self, chunk_len : int = 128, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding] = Factory(model.core.NoOpModule)):
+    def __init__(self, chunk_len : int = 128, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id
