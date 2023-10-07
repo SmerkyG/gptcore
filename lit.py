@@ -38,7 +38,7 @@ def collate_target_tokens_offset_by_one(batch):
     return values[..., :-1], values[..., 1:]
 
 @dataclass
-class LightningMetaTrainer(cli.ITrainer):
+class CoreLightningTrainer(cli.ITrainer):
     train_dataset_factory:Callable[..., torch.utils.data.dataset.Dataset]=field_default(lambda: Factory())
     train_dataloader_factory:Callable[..., torch.utils.data.DataLoader]=field_default(lambda: Factory())
     val_dataset_factory:Callable[..., torch.utils.data.dataset.Dataset]=field_default(lambda: Factory())
@@ -55,10 +55,14 @@ class LightningMetaTrainer(cli.ITrainer):
 
     def train(self, cfg : cli.ConfigBase):
         assert(isinstance(self.lightning_trainer_factory, Factory))
+
+        if cfg.seed_everything is not None:
+            lightning.seed_everything(cfg.seed_everything)
+
         torch.backends.cudnn.benchmark = self.lightning_trainer_factory['precision'] == "fp32"
         torch.backends.cudnn.enabled = self.lightning_trainer_factory['precision'] == "fp32"
 
-        lightning_model = LightningModel(
+        lightning_model = CoreLightningModel(
             model_factory=cfg.model_factory, 
             optimizer_factory=self.optimizer_factory, 
             loss_fn_factory=self.loss_fn_factory,
@@ -92,19 +96,85 @@ class LightningMetaTrainer(cli.ITrainer):
                 print("Testing complete!")
 
         trainer : lightning.Trainer = self.lightning_trainer_factory(num_sanity_val_steps=0)#, enable_progress_bar=False)#num_sanity_val_steps=1)
-        # if cfg.compile:
-        #     try:
-        #         lightning_model.model = torch.compile(lightning_model.model)
-        #     except Exception as e:
-        #         print(f"Skipping torch.compile due to error: {e}")
+        if cfg.compile:
+            try:
+                lightning_model.model = torch.compile(lightning_model.model)
+            except Exception as e:
+                print(f"Skipping torch.compile due to error: {e}")
 
         # #torch._dynamo.config.verbose=True
         trainer.fit(lightning_model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=self.ckpt_path)
 
+import generator
+import torch.amp
+from contextlib import nullcontext
+class CoreLightningPredictor(cli.IPredictor):
+    def __init__(self, cfg : cli.ConfigBase | None, predicting_cfg : Any | None, tokenizer_factory : Callable, checkpoint_path : str | None, seed : int | None = None):
+        if seed is not None:
+            lightning.seed_everything(seed)
+
+        self.tokenizer = tokenizer_factory()
+        if checkpoint_path is None:
+            if cfg is not None:
+                lightning_model = CoreLightningModel(model_factory=cfg.model_factory)
+        else:
+            if cfg is not None:            
+                lightning_model = CoreLightningModel.load_from_checkpoint(checkpoint_path, model_factory=cfg.model_factory)
+            else:
+                lightning_model = CoreLightningModel.load_from_checkpoint(checkpoint_path)
+
+        #self.sampler = predicting_cfg.sampler_factory()
+
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
+        dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
+        device_type = 'cuda' if 'cuda' in self.device else 'cpu' # for later use in torch.autocast
+        ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+        self.ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+        lightning_model.eval()
+        lightning_model.to(self.device)
+
+        self.gen = generator.Generator(lightning_model.model) # FIXME - , self.sampler)
+
+        self.initialized = False
+        
+    def ingest(self, input_text:str):
+        if not self.initialized:
+            self.initialized = True
+            # special starting token for unconditional generation or regular generation
+            start_token_str = self.tokenizer.bos_token
+            if start_token_str is None:
+                start_token_str = self.tokenizer.eos_token
+            input_text = start_token_str + input_text
+
+        # FIXME - move to int16
+        tokenized_input_text = torch.LongTensor(self.tokenizer(input_text)['input_ids'], device=self.device).unsqueeze(0)
+
+        with self.ctx:
+            self.gen.ingest(tokenized_input_text)
+
+    def predict(self, num_outputs:int):
+        with self.ctx:
+            for next_token_tensor in self.gen.predict(num_outputs):
+                yield self.tokenizer.decode(next_token_tensor[0, ...])
+        
+    # FIXME - add encode, get_state, set_state
+
+    def reset(self):
+        self.initialized = False
+        self.reset_encoder()
+        self.reset_decoder()
+
+    def reset_decoder(self):
+        self.gen.clear_decoder_state()
+
+    def reset_encoder(self):
+        self.gen.clear_encoder_state()
+
+
 def console_clear_last_line():
     print('\033[1A', end='\x1b[2K')
 
-class LightningModel(LightningModule):
+class CoreLightningModel(LightningModule):
     def __init__(
         self,
         model_factory : Callable[..., nn.Module] = Factory(model.core.Decoder),

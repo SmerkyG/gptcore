@@ -15,7 +15,7 @@ from util.logger import log, log_always
 
 from dataclasses import dataclass, field
 
-from typing import Callable, Any
+from typing import Callable, Any, Generator
 
 import dataclasses
 
@@ -34,16 +34,26 @@ class ConfigBase:
 
 class ITrainer:
     def train(self, cfg : ConfigBase):
-        pass
+        raise NotImplementedError()
 
-class IEvaluator:
-    def eval(self, cfg : ConfigBase):
-        pass
+class IPredictor:
+    def ingest(self, input_text:str) -> None:
+        raise NotImplementedError()
+    def predict(self, num_outputs:int) -> Generator[str, None, None]:
+        raise NotImplementedError()
+    # FIXME - add encode, get_state, set_state
+    def reset(self):
+        raise NotImplementedError()
+    def reset_encoder(self):
+        raise NotImplementedError()
+    def reset_decoder(self):
+        raise NotImplementedError()
+
 
 @dataclass
 class Config(ConfigBase):
     trainer_factory:Callable[..., ITrainer]=field_default(lambda: Factory())
-    evaluator_factory:Callable[..., IEvaluator]=field_default(lambda: Factory())
+    predictor_factory:Callable[..., IPredictor]=field_default(lambda: Factory())
 
 def cli():
     parser = argparse.ArgumentParser(description='train and execute pytorch models using lightning', add_help=True)
@@ -93,32 +103,74 @@ def cli():
     except TypeError:
         raise util.config.ConfigInstantiationError("Error instantiating config - did you forget a 'lambda:', causing a class or function to be called immediately with not all of its arguments supplied? Unfortunately we can't know where in the config... see above exception for type involved")
 
-    if cfg.seed_everything is not None:
-        lightning.seed_everything(cfg.seed_everything)
-
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision("high")
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-
-    # cfgctx.batch_size = cfg.batch_size
-    # cfgctx.block_size = cfg.block_size
-    # cfgctx.tokenizer = cfg.tokenizer_factory()
 
     # NOTE - we have to replace identifier accessors here, because if dataloader forks new processes, then
     #  those won't be able to access the values from the loaded cfgctx module unless they're materialized in advance here
     for field in dataclasses.fields(cfg):
         setattr(cfg, field.name, util.config.recursively_replace_identifier_accessors(getattr(cfg, field.name)))
 
-    log_always("config:" + "\n" + str(cfg) + "\n")
-
     if args.command == 'train':
+        log_always("config:" + "\n" + str(cfg) + "\n")
+
         trainer = cfg.trainer_factory()
         trainer.train(cfg)
 
+    import sys    
     if args.command == 'eval':
-        evaluator = cfg.evaluator_factory()
-        evaluator.eval(cfg)
+        predictor = cfg.predictor_factory(cfg=cfg)
+
+        def console_clear_last_line():
+            print('\033[1A', end='\x1b[2K')
+
+        n_tokens = 128
+        while True:
+            print("Enter text to ingest, followed by Ctrl-D then Enter.")
+            text = ""
+            while True:
+                b = sys.stdin.buffer.readline()
+                s = str(b, 'UTF-8')
+                eof = s.find('\x04')
+                if eof >= 0:
+                    text += s[:eof]
+                    break
+                text += s
+            try:
+                predictor.ingest(text)
+            except EOFError:
+                pass
+            except Exception as e:
+                print("Error:", e)
+                print("Resetting...")
+                predictor.reset()
+                continue
+
+            while True:
+                print()
+                line = input(f"Commands: [Enter] predict {n_tokens} tokens, [num_tokens] to predict, [i]ngest, [r]eset: ")
+                if len(line) > 0:
+                    if line[0].lower() == 'r':
+                        print("Resetting...")
+                        predictor.reset()
+                        break
+                    if line[0].lower() == 'i':
+                        break
+                    new_n_tokens = int(line)
+                    if new_n_tokens > 0:
+                        n_tokens = new_n_tokens
+                console_clear_last_line()
+                try:
+                    for next_token_str in predictor.predict(num_outputs=n_tokens):
+                        print(next_token_str, end='')
+                except Exception as e:
+                    print("Error:", e)
+                    print("Resetting...")
+                    predictor.reset()
+                    break
+
 
 if __name__ == "__main__":
     cli()

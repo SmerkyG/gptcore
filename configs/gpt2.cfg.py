@@ -51,7 +51,7 @@ cli.Config(
         ),
     ),
 
-    trainer_factory = lambda: lit.LightningMetaTrainer(
+    trainer_factory = lambda: lit.CoreLightningTrainer(
         optimizer_factory = lambda params: torch.optim.Adam(
             params=params,
             lr=6e-4,
