@@ -32,11 +32,11 @@ class Llama2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer,
         return self.dropout(self.w_out(self.w_gate(x) * self.activation(self.w_hidden(x))))
 
 class Llama2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
-    def __init__(self, attention_factory : Factory = Factory(model.core.TorchAttention), n_kv_head : Optional[int] = None):
+    def __init__(self, attention_factory : Factory = Factory(model.core.TorchAttention)):
         super().__init__()
         hparams, layer_id = self.hparams, self.layer_id
         self.hparams = hparams
-        self.n_kv_head = n_kv_head if n_kv_head is not None else hparams.n_head
+        self.n_kv_head = int(hparams.n_head * hparams.n_kv_head_ratio)
         base_head_size = int(hparams.d_model / hparams.n_head)
         C = hparams.d_model
         QH = hparams.n_head
@@ -58,36 +58,36 @@ class Llama2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, mod
     def forward(self, xq : Tensor, xk : Tensor, xv : Tensor, recurrent_memory : Optional[Tensor] = None):       
         hparams = self.hparams
         B, T, C = xq.size() # batch size, sequence length, token embedding dimension count
-        QH = hparams.n_head
-        KH = VH = self.n_kv_head
+        H = hparams.n_head
+        KVH = self.n_kv_head
         base_head_size = int(hparams.d_model / hparams.n_head)
         K = int(hparams.d_qk_ratio * base_head_size)
         Q = int(hparams.d_qk_ratio * base_head_size)
         V = int(hparams.d_v_ratio * base_head_size)
 
-        q = self.w_query(xq) # (B, T, QH*Q)
-        k = self.w_key(xk) # (B, T, KH*K)
-        v = self.w_value(xv) # (B, T, VH*V)
+        q = self.w_query(xq) # (B, T, H*Q)
+        k = self.w_key(xk) # (B, T, KVH*K)
+        v = self.w_value(xv) # (B, T, KVH*V)
 
         # transpose H and T dimensions so that all heads can be worked on together with a single matrix (required by all efficient attention/retention implementations)
-        q = q.view(B, T, QH, Q).transpose(1, 2) # (B, QH, T, Q)
-        k = k.view(B, T, KH, K).transpose(1, 2) # (B, KH, T, K)
-        v = v.view(B, T, VH, V).transpose(1, 2) # (B, VH, T, V)
+        q = q.view(B, T, H, Q).transpose(1, 2) # (B, H, T, Q)
+        k = k.view(B, T, KVH, K).transpose(1, 2) # (B, KH, T, K)
+        v = v.view(B, T, KVH, V).transpose(1, 2) # (B, VH, T, V)
 
         # rotate queries and keys via RoPE / XPos
         q, k = self.rotary_positional_embedding((q, k))
 
         # support for grouped-query attention
         # if there are fewer k/v heads than total heads, repeat them until the number matches
-        if KH < QH:
-            reps = QH // KH
-            k = k[:,:,None,:,:].expand(B, KH, reps, T, K).contiguous().view(B, QH, T, K)
-            v = v[:,:,None,:,:].expand(B, VH, reps, T, V).contiguous().view(B, QH, T, V)
+        if KVH < H:
+            reps = H // KVH
+            k = k[:,:,None,:,:].expand(B, KVH, reps, T, K).contiguous().view(B, H, T, K)
+            v = v[:,:,None,:,:].expand(B, KVH, reps, T, V).contiguous().view(B, H, T, V)
 
-        y = self.attention_module(q, k, v, recurrent_memory) # (B, QH, T, V)
+        y = self.attention_module(q, k, v, recurrent_memory) # (B, H, T, V)
 
         # squeeze all the head embeddings together into a single dimension
-        y = y.transpose(1, 2).contiguous().view(B, T, QH*V) # (B, QH, T, V) -> (B, T, VH*V)
+        y = y.transpose(1, 2).contiguous().view(B, T, H*V) # (B, H, T, V) -> (B, T, H*V)
 
         # project the result to our model embedding size
-        return self.w_out(y) # (B, T, QH*V) -> (B, T, C)
+        return self.w_out(y) # (B, T, H*V) -> (B, T, C)

@@ -24,6 +24,8 @@ class HParams():
     d_model : int = 768     # dimension of main model embedding space
     n_head : int = 12       # number of heads (base_head_size = int(d_model / n_head))
 
+    n_kv_head_ratio : float = 1 # ratio of kv heads to n_head for grouped-query attention (GQA)
+
     d_qk_ratio : float = 1  # ratio of query_head_size and key_head_size to base_head_size
     d_v_ratio : float = 1   # ratio of value_head_size to base_head_size
 

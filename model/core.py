@@ -130,6 +130,7 @@ class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, Transform
         T = hparams.max_sequence_length
         D = hparams.d_model
         H = hparams.n_head
+        KVH = int(hparams.n_head * hparams.n_kv_head_ratio)
         K = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         Q = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         V = int(hparams.d_v_ratio * hparams.d_model / hparams.n_head)
@@ -138,8 +139,8 @@ class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, Transform
         self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(T, Q)
 
         self.w_query = nn.Linear(D, H * Q, bias=False)
-        self.w_key = nn.Linear(D, H * K, bias=False)
-        self.w_value = nn.Linear(D, H * V, bias=False)
+        self.w_key = nn.Linear(D, KVH * K, bias=False)
+        self.w_value = nn.Linear(D, KVH * V, bias=False)
         self.w_gate = nn.Linear(D, H * G, bias=False)
         self.q_norm = qkv_norm_factory(Q)
         self.k_norm = qkv_norm_factory(K)
@@ -157,6 +158,7 @@ class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, Transform
         hparams = self.hparams
         B, T, D = xq.size() # batch size, sequence length, token embedding dimension count
         H = hparams.n_head
+        KVH = int(hparams.n_head * hparams.n_kv_head_ratio)
         K = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         Q = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         V = int(hparams.d_v_ratio * hparams.d_model / hparams.n_head)
@@ -173,8 +175,8 @@ class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, Transform
 
         # transpose H and T dimensions so that all heads can be worked on together with a single matrix (required by all efficient attention/retention implementations)
         q = q.view(B, T, H, Q).transpose(1, 2) # (B, H, T, Q)
-        k = k.view(B, T, H, K).transpose(1, 2) # (B, H, T, K)
-        v = v.view(B, T, H, V).transpose(1, 2) # (B, H, T, V)
+        k = k.view(B, T, KVH, K).transpose(1, 2) # (B, KVH, T, K)
+        v = v.view(B, T, KVH, V).transpose(1, 2) # (B, KVH, T, V)
 
         # normalize each head
         q = self.q_norm(q)
@@ -183,6 +185,13 @@ class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, Transform
 
         # rotate queries and keys via RoPE / XPos
         q, k = self.rotary_positional_embedding((q, k))
+
+        # support for grouped-query attention
+        # if there are fewer k/v heads than total heads, repeat them until the number matches
+        if KVH < H:
+            reps = H // KVH
+            k = k[:,:,None,:,:].expand(B, KVH, reps, T, K).contiguous().view(B, H, T, K)
+            v = v[:,:,None,:,:].expand(B, KVH, reps, T, V).contiguous().view(B, H, T, V)
 
         y = self.attention_module(q, k, v, recurrent_memory) # (B, H, T, V)
 

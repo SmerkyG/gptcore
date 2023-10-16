@@ -39,14 +39,15 @@ class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model
         hparams, layer_id = self.hparams, self.layer_id
         C = hparams.d_model
         H = hparams.n_head
+        KVH = int(hparams.n_head * hparams.n_kv_head_ratio)
         K = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         Q = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         V = int(hparams.d_v_ratio * hparams.d_model / hparams.n_head)
         T = hparams.max_sequence_length
         
         self.w_query = nn.Linear(C, H * Q, bias=False)
-        self.w_key = nn.Linear(C, H * K, bias=False)
-        self.w_value = nn.Linear(C, H * V, bias=False)
+        self.w_key = nn.Linear(C, KVH * K, bias=False)
+        self.w_value = nn.Linear(C, KVH * V, bias=False)
 
         self.w_out = nn.Linear(H * V, C, bias=False)
         def w_out_init(m): m.weight *= ((2 * self.hparams.n_layer)**-0.5)
@@ -60,8 +61,9 @@ class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model
         hparams = self.hparams
         B, T, C = xq.size() # batch size, sequence length, token embedding dimension count
         H = hparams.n_head
-        K = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
+        KVH = int(hparams.n_head * hparams.n_kv_head_ratio)
         Q = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
+        K = int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head)
         V = int(hparams.d_v_ratio * hparams.d_model / hparams.n_head)
 
         q = self.w_query(xq) # (B, T, H*Q)
@@ -70,11 +72,18 @@ class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model
 
         # transpose H and T dimensions so that all heads can be worked on together with a single matrix (required by all efficient attention/retention implementations)
         q = q.view(B, T, H, Q).transpose(1, 2) # (B, H, T, Q)
-        k = k.view(B, T, H, K).transpose(1, 2) # (B, H, T, K)
-        v = v.view(B, T, H, V).transpose(1, 2) # (B, H, T, V)
+        k = k.view(B, T, KVH, K).transpose(1, 2) # (B, H, T, K)
+        v = v.view(B, T, KVH, V).transpose(1, 2) # (B, H, T, V)
 
         # rotate queries and keys via RoPE / XPos
         q, k = self.rotary_positional_embedding((q, k))
+
+        # support for grouped-query attention
+        # if there are fewer k/v heads than total heads, repeat them until the number matches
+        if KVH < H:
+            reps = H // KVH
+            k = k[:,:,None,:,:].expand(B, KVH, reps, T, K).contiguous().view(B, H, T, K)
+            v = v[:,:,None,:,:].expand(B, KVH, reps, T, V).contiguous().view(B, H, T, V)
 
         y = self.attention_module(q, k, v, recurrent_memory) # (B, H, T, V)
 
