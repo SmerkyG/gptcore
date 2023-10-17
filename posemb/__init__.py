@@ -6,15 +6,16 @@ from torch import Tensor
 
 import posemb.interface
 
-class LearnedPositionalEmbedding(posemb.interface.IPositionalEmbedding):
+class LearnedPositionalEmbedding(nn.Module, posemb.interface.IPositionalEmbedding):
     def __init__(self, sequence_length : int, d_model : int):
+        super().__init__()
         self.positional_embedding = nn.Embedding(sequence_length, d_model)
 
     def forward(self, x : Tensor):
         B, T, C = x.size()
-        return x + self.positional_embedding(torch.arange(T))
+        return x + self.positional_embedding(torch.arange(T).to(x.device))
 
-class SinPositionalEmbedding(posemb.interface.IPositionalEmbedding):
+class SinPositionalEmbedding(nn.Module, posemb.interface.IPositionalEmbedding):
     cache = None
 
     def __init__(self, sequence_length : int, d_model : int):
