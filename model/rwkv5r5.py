@@ -43,7 +43,7 @@ class RWKVConfig():
         self.head_size_divisor=8
 
 class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
-    def __init__(self, chunk_len : int = 1, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
+    def __init__(self, chunk_len : int = 32, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id
@@ -84,19 +84,19 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, m
             # FIXME - not sure this can really work when dim_rk != dim_v... doesn't some decay apply to the v dimension of the KxV state?
 
             # fancy time_decay
-            k_dim_att = args.n_kv_head * self.k_head_size
-            decay_speed = torch.ones(k_dim_att)
-            for n in range(k_dim_att):
-                decay_speed[n] = -6 + 5 * (n / max(k_dim_att - 1, 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_kv_head, self.r_head_size)) # (H, R)      
+            v_dim_att = args.n_kv_head * self.v_head_size
+            decay_speed = torch.ones(v_dim_att)
+            for n in range(v_dim_att):
+                decay_speed[n] = -6 + 5 * (n / max(v_dim_att - 1, 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_kv_head, self.r_head_size)) # (H, V)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
-            tmp = torch.zeros(k_dim_att)
-            for n in range(k_dim_att):
+            tmp = torch.zeros(v_dim_att)
+            for n in range(v_dim_att):
                 zigzag = ((n + 1) % 3 - 1) * 0.1
-                tmp[n] = ratio_0_to_1 * (1 - (n / max(k_dim_att - 1, 1))) + zigzag
+                tmp[n] = ratio_0_to_1 * (1 - (n / max(v_dim_att - 1, 1))) + zigzag
 
-            self.time_faaaa = nn.Parameter(tmp.reshape(self.n_kv_head, self.r_head_size)) # (H, R)      
+            self.time_faaaa = nn.Parameter(tmp.reshape(self.n_kv_head, self.r_head_size)) # (H, V)      
 
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(args.n_embd, self.n_head * self.r_head_size, bias=False)
@@ -155,8 +155,8 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, m
             reps = H // KVH
             k = k[:,:,None,:,:].expand(B, KVH, reps, TT, K).contiguous().view(B, H, TT, K)
             v = v[:,:,None,:,:].expand(B, KVH, reps, TT, V).contiguous().view(B, H, TT, V)
-            time_decay = time_decay.expand(KVH, reps, R).contiguous().view(H, R)
-            time_faaaa = time_faaaa.expand(KVH, reps, R).contiguous().view(H, R)
+            time_decay = time_decay.expand(KVH, reps, V).contiguous().view(H, V)
+            time_faaaa = time_faaaa.expand(KVH, reps, V).contiguous().view(H, V)
 
         k = k.transpose(-2, -1) # BHTS -> BHST
 
@@ -182,23 +182,22 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, m
                 x[..., t:t+1, :] = (rt @ (t_first * at + s)).squeeze(1)
                 s = at + t_decay * s
         else:
-            w = torch.exp(-torch.exp(time_decay.float())).unsqueeze(-2) # (H,1) new (H, 1, R)
-            u = time_faaaa.float().unsqueeze(-2) # (H, 1) new(H, 1, R)
+            w = torch.exp(-torch.exp(time_decay)).unsqueeze(-1) # (H,1) new (H, V, 1)
+            u = time_faaaa.float().unsqueeze(-1) # (H, 1) new (H, V, 1)
 
-            ws = w.pow(T).reshape(1, H, 1, R)
-            ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).unsqueeze(-1).repeat(H, 1, R) # (H,T) new (H,T,R)
-            w = w.repeat(1, T, 1) # (H,T) new (H,T,R)
-            w = w.pow(ind) # (H,T) new (H,T,R)
+            ws = w.pow(T).reshape(1, H, 1, V) # FIXME - order?
+            ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).unsqueeze(0).repeat(H, V, 1) # (H,T) new (H,V,T)
+            w = w.repeat(1, 1, T) # (H,T) new (H,V,T)
+            w = w.pow(ind) # (H,T) new (H,V,T)
 
-            #wk = w.reshape(1, H, 1, T) # (H, T) -> (1, H, 1, T)
-            wk = w.transpose(-1, -2).reshape(1, H, R, T) # (1, H, R, T)
-            wb = wk.transpose(-2, -1).flip(2) # (1, H, T, R)
+            wk = w.transpose(-1, -2).reshape(1, H, V, T) # (1, H, V, T)
+            wb = wk.transpose(-2, -1).flip(2) # (1, H, T, V) # FIXME - order?
 
-            w = torch.cat([w[:, 1:, :], u], dim=1) # (H, T) new (H, T, R)
-            w = F.pad(w, (0, 0, 0, T, 0, 0))
-            w = torch.tile(w, [1,T,1])
-            w = w[:, :-T, :].reshape(-1, T, 2 * T - 1, R)
-            w = w[:, :, T-1:].reshape(1, H, T, T, R)
+            w = torch.cat([w[:, :, 1:], u], dim=-1) # (H, T) new (H, V, T)
+            w = F.pad(w, (0, T))
+            w = torch.tile(w, [T])
+            w = w[:, :, :-T].reshape(H, V, T, 2 * T - 1)
+            w = w[:, :, :, T-1:].reshape(1, H, V, T, T)
 
             w = w.to(dtype=r.dtype)
             wk = wk.to(dtype=r.dtype)
@@ -208,27 +207,22 @@ class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, m
             #return self.jit_func_2(r, k, v, w, wk, wb, ws)
 
             for i in range(TT // T):
-                rr = r[:, :, i*T:i*T+T, :]
-                kk = k[:, :, :, i*T:i*T+T]
-                vv = v[:, :, i*T:i*T+T, :]
+                rr = r[:, :, i*T:i*T+T, :] # (B, H, T, R)
+                kk = k[:, :, :, i*T:i*T+T] # (B, H, K, T)
+                vv = v[:, :, i*T:i*T+T, :] # (B, H, T, V)
 
-                # x[:, :, i*T:i*T+T, :] = (rr @ (kk * w)) @ vv  +  (rr @ s) * wb # FIXME - maybe this if we change w?
-
-                # kv = kk @ vv
-                # x[:, :, i*T:i*T+T, :] = rr * (w * kv + ws * s)
-                # s = ws * s + wk * kv 
-
-                # crud, we gotta take rr@kk and expand it once for each head channel?! that's why w tensor has another dimension on it
-                # ah so gotta unsqueeze and multiply
-
-                xx = rr @ kk
-                xx = xx.unsqueeze(-1)
-                xx = xx * w # u really?
-                xx = xx @ vv
-                xx = xx + (rr @ s) * wb
+                xx = rr @ kk # (B, H, T, T)
+                xx = xx.unsqueeze(-3) # (B, H, 1, T, T)
+                xx = xx * w # (B, H, V, T, T)
+                vv2 = vv.transpose(-1, -2).unsqueeze(-1) # (B, H, V, T, 1)
+                xx = xx @ vv2 # (B, H, V, T, 1)
+                xx = xx.squeeze(-1).transpose(-1, -2) # (B, H, T, V)
+                remnant = (rr @ s) * wb # (B, H, T, V)
+                xx = xx + remnant # (B, H, T, V)
                 x[:, :, i*T:i*T+T, :] = xx
 
-                s = ws * s + (kk * wk) @ vv
+                s = ws * s # (B, H, K, V)
+                s = s + (kk * wk) @ vv
         
         
         x = x.transpose(1, 2).contiguous().view(B * TT, H*V) # BHTS -> BTHS -> BTC
