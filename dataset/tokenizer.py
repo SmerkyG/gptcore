@@ -1,16 +1,10 @@
-import numpy as np
 import torch
-from functools import partial
-import typing
-
-import cfgctx
 
 def tokenize(input, tokenizer):
     temp_max_length = getattr(tokenizer, 'model_max_length', None)
     tokenizer.model_max_length=int(1e30) # to avoid warnings when tokenizing long strings
     output = torch.tensor(tokenizer(input['text'])['input_ids'])
     tokenizer.model_max_length = temp_max_length
-    text = input['text']
     return output
 
 def tokenize_join_and_slice(input_batch : list[dict], tokenizer, block_size):
@@ -34,11 +28,6 @@ def tokenize_join_and_slice(input_batch : list[dict], tokenizer, block_size):
     return output_batch # different size than input_batch
 
     #return dict(input_ids=input_ids)
-
-# def tokenize_join_and_slice_in_context(input_batch : list[dict]):
-#     if input_batch is None:
-#         return None
-#     return tokenize_join_and_slice(input_batch, cfgctx.tokenizer, cfgctx.block_size)
 
 class Callable():
     def __call__(self, *args, **kwargs):
