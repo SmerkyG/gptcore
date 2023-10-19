@@ -263,7 +263,9 @@ class CoreLightningModel(LightningModule):
         self.last_iter_time = t
 
         if (batch_idx + 1) % self.trainer.log_every_n_steps == 0:
-            ms = (self.total_runtime - self.last_log_runtime) * 1000. / self.trainer.log_every_n_steps
+            ms_since = (self.total_runtime - self.last_log_runtime) * 1000.
+            ktok_per_sec = (self.tokens_processed - self.tokens_processed_prev_log) / ms_since
+            ms_per = ms_since / self.trainer.log_every_n_steps
             self.last_log_runtime = self.total_runtime
             if self.trainer.is_global_zero:
                 if batch_idx > 0 and int(math.log2(self.tokens_processed)) == int(math.log2(self.tokens_processed_prev_log)):
@@ -279,7 +281,7 @@ class CoreLightningModel(LightningModule):
                     metric.clear()
                     self.log('train/'+name, metric_value, on_step=True, rank_zero_only=True)
                     str += f'{name}:{metric_value:.4f} '
-                str += f"{gb:.1f}gb {ms:.2f}ms {self.total_runtime:.1f}sec"
+                str += f"{gb:.1f}gb {int(ms_per)}ms {ktok_per_sec:.2f}kT/s {self.total_runtime:.1f}sec"
                 print(str)
 
                 self.tokens_processed_prev_log = self.tokens_processed
