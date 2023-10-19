@@ -7,6 +7,26 @@ def tokenize(input, tokenizer):
     tokenizer.model_max_length = temp_max_length
     return output
 
+def tokenize_join_and_slice_input_ids(data, tokenizer, block_size):
+    # temporarily set tokenizer.model_max_length to avoid warnings when tokenizing long strings
+    temp_max_length = getattr(tokenizer, 'model_max_length', None)
+    tokenizer.model_max_length=int(1e30)
+
+    # join the text strings from each input in the input_batch together via the eos_token
+    text = str(tokenizer.eos_token).join(data['text'])
+
+    # tokenize the result
+    toks = torch.tensor(tokenizer(text)['input_ids'])
+
+    # split the result into a new output batch of token chunks of block_size_plus length
+    block_size_plus = block_size + 1
+    output_batch = [toks[i*block_size_plus:(i+1)*block_size_plus] for i in range(len(toks)//block_size_plus)]
+
+    # reset tokenizer.model_max_length
+    tokenizer.model_max_length = temp_max_length
+
+    return dict(input_ids=output_batch) # different size than input_batch
+
 def tokenize_join_and_slice(input_batch : list[dict], tokenizer, block_size):
     # temporarily set tokenizer.model_max_length to avoid warnings when tokenizing long strings
     temp_max_length = getattr(tokenizer, 'model_max_length', None)
