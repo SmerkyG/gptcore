@@ -38,14 +38,15 @@ class IAttention():
         raise NotImplementedError
         
 
-class TransformerLayerPart:
+class TransformerLayerPart(nn.Module):
     hparams = None
     layer_id = None
     def __init__(self):
+        super().__init__()
         self.hparams : HParams = TransformerLayerPart.hparams
         self.layer_id : int = TransformerLayerPart.layer_id
 
-class Attention(nn.Module, IAttention, TransformerLayerPart):
+class Attention(TransformerLayerPart, IAttention):
     # vanilla attention
     def __init__(self, bias_mask_factory : Callable[..., mask.IBiasMask] = Factory(mask.CausalBiasMask)): 
         super().__init__()
@@ -54,7 +55,7 @@ class Attention(nn.Module, IAttention, TransformerLayerPart):
     def forward(self, q:Tensor, k:Tensor, v:Tensor, recurrent_memory : Optional[Tensor] = None):
         return nn.functional.softmax(q @ k.transpose(-2, -1) * q.size(-1)**-0.5 + self.bias_mask, dim=-1) @ v
 
-class LinearAttention(nn.Module, IAttention, TransformerLayerPart):
+class LinearAttention(TransformerLayerPart, IAttention):
     # unscaled softmax-free attention (unscaled because we're presuming norm will be taken afterwards)
     def __init__(self, mul_mask_factory : Callable[..., mask.IMulMask] = Factory(mask.CausalMulMask)):
         super().__init__()
@@ -63,7 +64,7 @@ class LinearAttention(nn.Module, IAttention, TransformerLayerPart):
     def forward(self, q:Tensor, k:Tensor, v:Tensor, recurrent_memory : Optional[Tensor] = None):
         return (q @ k.transpose(-2, -1) * self.mul_mask(q)) @ v
 
-class TorchAttention(nn.Module, IAttention, TransformerLayerPart):
+class TorchAttention(TransformerLayerPart, IAttention):
     # uses optimized flashattention implementation when possible (as of pytorch2.0.1 this happens only when no mask is specified, but the next version should allow masks too)
     def __init__(self, bias_mask_factory : Callable[..., mask.IBiasMask] | None = None): 
         super().__init__()
@@ -74,7 +75,7 @@ class TorchAttention(nn.Module, IAttention, TransformerLayerPart):
 
         return nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias_mask, dropout_p=self.hparams.dropout, is_causal=bias_mask is None)
 
-class TimeLerp(nn.Module, TransformerLayerPart):
+class TimeLerp(TransformerLayerPart):
     def __init__(self):
         super().__init__()
         if self.layer_id < self.hparams.n_layer - 1:
@@ -93,7 +94,7 @@ class ReluSquared(nn.Module):
     def forward(self, x):
         return torch.square(torch.relu(x))
 
-class RWKVFeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, TransformerLayerPart):
+class RWKVFeedForwardSubLayer(TransformerLayerPart, model.interface.IFeedForwardSubLayer):
     def __init__(self, hidden_activation_factory : Callable = Factory(ReluSquared), gate_activation_factory : Callable = Factory(nn.Sigmoid)):
         super().__init__()
         self.layer_id = self.layer_id        
@@ -117,7 +118,7 @@ class RWKVFeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, T
         gate = self.gate_activation(gate)
         return gate * self.w_shrink(hidden)
 
-class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, TransformerLayerPart):
+class AttentionSubLayer(TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self,
                  attention_factory : Callable[..., IAttention] = Factory(TorchAttention), 
                  qkv_norm_factory : Callable = Factory(norm.RMSNorm, weight_scaling=False), 
@@ -215,14 +216,14 @@ class AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, Transform
 
         return y
 
-class IResidualOp(TransformerLayerPart):
+class IResidualOp():
     @abc.abstractmethod
     def forward(self, x : Tensor, sublayer, layer_recurrent_memory : Optional[Tensor] = None):
         raise NotImplementedError    
     def __call__(self, x : Tensor, sublayer, layer_recurrent_memory : Optional[Tensor] = None):
         raise NotImplementedError
 
-class ResidualAddOp(nn.Module, IResidualOp):
+class ResidualAddOp(TransformerLayerPart, IResidualOp):
     def __init__(self, sublayer_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling = False)):
         super().__init__()
         hparams = self.hparams
@@ -232,7 +233,7 @@ class ResidualAddOp(nn.Module, IResidualOp):
     def forward(self, x : Tensor, sublayer, layer_recurrent_memory : Optional[Tensor] = None):
         return x + self.dropout(sublayer(self.norm(x)))
 
-class ResidualMixOp(nn.Module, IResidualOp, TransformerLayerPart):
+class ResidualMixOp(TransformerLayerPart, IResidualOp):
     def __init__(self, sublayer_norm_factory : Callable[..., nn.Module] = Factory(norm.RMSNorm, weight_scaling = False)):
         super().__init__()
         hparams = self.hparams
@@ -243,7 +244,7 @@ class ResidualMixOp(nn.Module, IResidualOp, TransformerLayerPart):
     def forward(self, x : Tensor, sublayer, layer_recurrent_memory : Optional[Tensor] = None):
         return x * self.residual_mix + self.dropout(sublayer(self.norm(x))) * (2 - self.residual_mix)
 
-class TransformerLayer(nn.Module, TransformerLayerPart):
+class TransformerLayer(TransformerLayerPart):
     def __init__(self,  
                  self_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer] = Factory(AttentionSubLayer),
                  cross_attention_sublayer_factory : Callable[..., model.interface.IAttentionSubLayer | nn.Identity] = Factory(nn.Identity),
