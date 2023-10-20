@@ -161,7 +161,8 @@ class DM(lightning.LightningDataModule):
 #     sequence_length:int
 #     batch_size:int=1
 #     num_workers:int=0
-#     def get_dataloader(self, ds: Dataset, shuffle: bool = False):
+#     seed:int|None=None
+#     def get_dataloader(self, ds: Dataset, shuffle: bool|None = None):
 #         return DataLoader(ds, batch_size=self.batch_size, shuffle=shuffle, num_workers=self.num_workers, pin_memory=True, collate_fn=collate_target_tokens_offset_by_one)
     
 #     # split can be train, validation, or test
@@ -180,8 +181,8 @@ class DM(lightning.LightningDataModule):
 #             ds = ds.take(max_count=1024)
 #         #torchdata.datapipes.iter.Shuffler
 #         #torchdata.datapipes.iter.UnBatcher
-#         ds = ds.shuffle(buffer_size=10000, unbatch_level=0) # FIXME - does shuffle happen if we pass shuffle=False to the dataloader?
-#         return self.get_dataloader(ds, None)#split == 'train')
+#         ds = ds.shuffle(buffer_size=10000).set_seed(self.seed) # FIXME - does shuffle happen if we pass shuffle=False to the dataloader?
+#         return self.get_dataloader(ds, None if split == 'train' else False)
 
 #     def train_dataloader(self): return self.get_dataset('train')
 #     def val_dataloader(self): return self.get_dataset('validation')

@@ -89,6 +89,7 @@ cli.Config(
             batch_size=BATCH_SIZE, 
             sequence_length=MAX_SEQUENCE_LENGTH, 
             num_workers=4,
+            seed=32,
         ),
     ),
 )
