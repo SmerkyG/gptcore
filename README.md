@@ -136,9 +136,8 @@ The following are some of the improvements it uses:
 Embeddings are initialized to a small value but are then immediately normalized. This immediately creates an embedding space that is well distributed around the unit hypersphere, and converges in a rapid fashion with desirable qualities, even with no warmup.
 #### Weight Tying [citation](https://arxiv.org/abs/1608.05859v3)
 The unembedding which translates from the final layer embeddings back to token ids relies on the same weights as the embedding, resulting in faster training and significantly smaller model size.
-#### Rotary Positional Embedding (RoPE) [citation](https://arxiv.org/abs/2104.09864) / Attention with Linear Biases (ALiBi) [citation](https://arxiv.org/abs/2108.12409)
-We use RoPE to adjust query and key values before the attention computation or ALiBi to bias attention results, so that a flexible form of positional information is used by the network. 
-Unfortunately, we do not yet include the upcoming version of FlashAttention that would support ALiBi style biases, so ALiBi is currently significantly slower than RoPE using our platform.
+#### Attention with Linear Biases (ALiBi) [citation](https://arxiv.org/abs/2108.12409)
+We use ALiBi to bias attention results, so that a flexible form of positional information is used by the network. 
 #### RMSNorm / L2Norm [citation](https://arxiv.org/abs/1910.07467) [citation](https://arxiv.org/abs/2307.14995)
 Prior formulations used BatchNorm or LayerNorm, but with proper initialization and scaling we can use root mean square norm and sometimes unscaled L2 norm with no weight learning. This results in faster learning with no downsides.
 #### Attention Sublayer Gating [citation](https://arxiv.org/abs/1804.03999v3)
