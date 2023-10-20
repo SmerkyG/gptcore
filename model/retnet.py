@@ -280,7 +280,7 @@ class MultiScaleRetention(nn.Module):
         return output
 
 
-class MultiScaleRetentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+class MultiScaleRetentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
     cache = None
 
     def __init__(self):

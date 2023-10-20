@@ -14,7 +14,7 @@ import model.core
 import model.interface
 from model.hparams import HParams
 
-class Llama2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, model.core.TransformerLayerPart):
+class Llama2FeedForwardSubLayer(model.core.TransformerLayerPart, model.interface.IFeedForwardSubLayer):
     # SwiGLU FFN
     def __init__(self, hidden_activation_factory : Factory = Factory(nn.SiLU)):
         super().__init__()
@@ -31,7 +31,7 @@ class Llama2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer,
     def forward(self, x : Tensor):
         return self.dropout(self.w_out(self.w_gate(x) * self.activation(self.w_hidden(x))))
 
-class Llama2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+class Llama2AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self, attention_factory : Factory = Factory(model.core.TorchAttention)):
         super().__init__()
         hparams, layer_id = self.hparams, self.layer_id

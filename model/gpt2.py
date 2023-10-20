@@ -16,7 +16,7 @@ from model.hparams import HParams
 import model.core
 import posemb.interface
 
-class GPT2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, model.core.TransformerLayerPart):
+class GPT2FeedForwardSubLayer(model.core.TransformerLayerPart, model.interface.IFeedForwardSubLayer):
     def __init__(self, hidden_activation_factory : Callable[..., nn.Module] = Factory(nn.GELU, approximate='tanh')):
         super().__init__()
         hparams = self.hparams
@@ -33,7 +33,7 @@ class GPT2FeedForwardSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, m
         x = self.dropout(x)
         return x
 
-class GPT2AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+class GPT2AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self, attention_factory : Callable[..., model.core.IAttention] = Factory(model.core.TorchAttention)):
         super().__init__()
         hparams, layer_id = self.hparams, self.layer_id

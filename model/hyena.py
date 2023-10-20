@@ -382,7 +382,7 @@ class HyenaOperator(nn.Module):
     def d_output(self):
         return self.d_model
 
-class HyenaAttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+class HyenaAttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self):
         super().__init__()
         self.hyena = HyenaOperator(
@@ -394,7 +394,7 @@ class HyenaAttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, mode
         x = xq # FIXME - support encoder-decoder models
         return self.hyena(x)
 
-class HyTention(nn.Module, model.core.IAttention, model.core.TransformerLayerPart):
+class HyTention(model.core.TransformerLayerPart, model.core.IAttention):
     # a very simplified version of the Hyena operator to make it easy to understand, with none of the initialization and slow conv1d instead of fast fft'd convolutions
     def __init__(self):
         super().__init__()

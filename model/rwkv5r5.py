@@ -42,8 +42,8 @@ class RWKVConfig():
         self.ctx_len=hparams.max_sequence_length
         self.head_size_divisor=8
 
-class RWKV5r5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
-    def __init__(self, chunk_len : int = 32, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
+class RWKV5r5_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
+    def __init__(self, chunk_len : int = 64, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id

@@ -59,8 +59,8 @@ class L2Wrap(torch.autograd.Function):
         gy.scatter_(-1, ids, maxx * factor)
         return (grad_output, gy)
         
-class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
-    def __init__(self, chunk_len : int = 1, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
+class RWKV5_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
+    def __init__(self, chunk_len : int = 512, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id
@@ -233,7 +233,7 @@ class RWKV5_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, mod
         return x
 
 
-class RWKV4_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, model.core.TransformerLayerPart):
+class RWKV4_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self):
         super().__init__()
 
@@ -341,7 +341,7 @@ class RWKV4_AttentionSubLayer(nn.Module, model.interface.IAttentionSubLayer, mod
     #     rwkv = self.output(rwkv)
     #     return rwkv
 
-class RWKV_ChannelMixSubLayer(nn.Module, model.interface.IFeedForwardSubLayer, model.core.TransformerLayerPart):
+class RWKV_ChannelMixSubLayer(model.core.TransformerLayerPart, model.interface.IFeedForwardSubLayer):
     def __init__(self):
         super().__init__()
         hparams, layer_id = self.hparams, self.layer_id
