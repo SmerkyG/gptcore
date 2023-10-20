@@ -166,8 +166,8 @@ class RWKV5_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.I
             reps = H // KVH
             k = k[:,:,None,:,:].expand(B, KVH, reps, TT, K).contiguous().view(B, H, TT, K)
             v = v[:,:,None,:,:].expand(B, KVH, reps, TT, V).contiguous().view(B, H, TT, V)
-            time_decay = time_decay.expand(KVH, reps).contiguous().view(H)
-            time_faaaa = time_faaaa.expand(KVH, reps).contiguous().view(H)
+            time_decay = time_decay.expand(reps, KVH).contiguous().view(H)
+            time_faaaa = time_faaaa.expand(reps, KVH).contiguous().view(H)
 
         k = k.transpose(-2, -1) # BHTS -> BHST
 
