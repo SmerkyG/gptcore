@@ -12,6 +12,7 @@ import lit
 
 import model.core
 import posemb
+import mask
 
 BATCH_SIZE = 8
 VOCAB_SIZE = 50304
@@ -19,7 +20,7 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained('gpt2')
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'GPTAlpha L12D768H12CM2Adam'
+LOG_NAME = 'GPTAlpha L12D768H12CM2V1Adam'
 
 cli.Config(
     seed_everything = 1337,
@@ -27,21 +28,21 @@ cli.Config(
 
     model_factory = lambda: model.core.Decoder(
         hparams = model.hparams.HParams(
-           vocab_size = VOCAB_SIZE,
+            vocab_size = VOCAB_SIZE,
             max_sequence_length=MAX_SEQUENCE_LENGTH,
 
             n_layer=12,
             n_head=12,
             d_model=768,
 
-            feedforward_d_model_ratio=1.5,
+            feedforward_d_model_ratio=3,
 
-            d_v_ratio=2,
-
-            rotary_positional_embedding_factory = lambda sequence_length, d_query: posemb.RotaryEmbedding(sequence_length, d_query),
+            d_v_ratio=1,
         ),
         layer_factory=lambda: model.core.TransformerLayer(
-            self_attention_sublayer_factory = lambda: model.core.AttentionSubLayer(),
+            self_attention_sublayer_factory = lambda: model.core.AttentionSubLayer(
+                attention_factory = lambda:model.core.TorchAttention(bias_mask_factory=lambda **kwargs: mask.AlibiMask(**kwargs)),
+            ),
             feedforward_sublayer_factory = lambda: model.core.RWKVFeedForwardSubLayer(),
         ),
     ),

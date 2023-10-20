@@ -50,16 +50,16 @@ class Attention(TransformerLayerPart, IAttention):
     # vanilla attention
     def __init__(self, bias_mask_factory : Callable[..., mask.IBiasMask] = Factory(mask.CausalBiasMask)): 
         super().__init__()
-        self.bias_mask = bias_mask_factory(self.hparams, self.layer_id)
+        self.bias_mask = bias_mask_factory(self.hparams.max_sequence_length, self.hparams.n_head, self.layer_id)
 
     def forward(self, q:Tensor, k:Tensor, v:Tensor, recurrent_memory : Optional[Tensor] = None):
-        return nn.functional.softmax(q @ k.transpose(-2, -1) * q.size(-1)**-0.5 + self.bias_mask, dim=-1) @ v
+        return nn.functional.softmax(q @ k.transpose(-2, -1) * q.size(-1)**-0.5 + self.bias_mask(q), dim=-1) @ v
 
 class LinearAttention(TransformerLayerPart, IAttention):
     # unscaled softmax-free attention (unscaled because we're presuming norm will be taken afterwards)
     def __init__(self, mul_mask_factory : Callable[..., mask.IMulMask] = Factory(mask.CausalMulMask)):
         super().__init__()
-        self.mul_mask = mul_mask_factory(self.hparams, self.layer_id)
+        self.mul_mask = mul_mask_factory(self.hparams.max_sequence_length, self.hparams.n_head, self.layer_id)
 
     def forward(self, q:Tensor, k:Tensor, v:Tensor, recurrent_memory : Optional[Tensor] = None):
         return (q @ k.transpose(-2, -1) * self.mul_mask(q)) @ v
@@ -68,7 +68,7 @@ class TorchAttention(TransformerLayerPart, IAttention):
     # uses optimized flashattention implementation when possible (as of pytorch2.0.1 this happens only when no mask is specified, but the next version should allow masks too)
     def __init__(self, bias_mask_factory : Callable[..., mask.IBiasMask] | None = None): 
         super().__init__()
-        self.bias_mask = None if bias_mask_factory is None else bias_mask_factory(self.hparams, self.layer_id)
+        self.bias_mask = None if bias_mask_factory is None else bias_mask_factory(self.hparams.max_sequence_length, self.hparams.n_head, self.layer_id)
 
     def forward(self, q:Tensor, k:Tensor, v:Tensor, recurrent_memory : Optional[Tensor] = None):
         bias_mask = self.bias_mask(q) if self.bias_mask is not None else None

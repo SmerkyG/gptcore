@@ -20,7 +20,7 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained('gpt2')
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'GPTAlpha L12D768H12CM2Adam'
+LOG_NAME = 'GPTAlpha L12D768H12CM2V1Adam'
 
 cli.Config(
     seed_everything = 1337,
@@ -35,20 +35,21 @@ cli.Config(
             n_head=12,
             d_model=768,
 
+            n_kv_head_ratio = 1,
+
+            d_qk_ratio = 1,
+            d_v_ratio = 1,
+
             dropout=0,
             
-            feedforward_d_model_ratio=1.5,
-
-            d_v_ratio=2,
-
-            rotary_positional_embedding_factory = lambda sequence_length, d_query: posemb.RotaryEmbedding(sequence_length, d_query),
+            feedforward_d_model_ratio=3,
         ),
         embedding_norm_factory=lambda dim: norm.RMSNorm(dim, weight_scaling=False),
         positional_embedding_factory=lambda:torch.nn.Identity(),
         share_embedding_weights=True,
         layer_factory=lambda: model.core.TransformerLayer(
             self_attention_sublayer_factory = lambda: model.core.AttentionSubLayer(
-                attention_factory = lambda: model.core.TorchAttention(bias_mask_factory=None),
+                attention_factory = lambda:model.core.TorchAttention(bias_mask_factory=lambda **kwargs: mask.AlibiMask(**kwargs)),
                 qkv_norm_factory = lambda dim: norm.RMSNorm(dim, weight_scaling=False),
                 time_mixer_factory = lambda: model.core.TimeLerp(),
             ),
