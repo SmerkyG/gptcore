@@ -33,9 +33,9 @@ import cli
 def field_default(fn):
     return field(default_factory=fn)
 
-def collate_target_tokens_offset_by_one(batch): 
-    values = torch.utils.data.default_collate(batch)
-    return values[..., :-1], values[..., 1:]
+def collate_target_tokens_offset_by_one_input_ids(batch): 
+    tuple_batch = [(d['input_ids'][:-1], d['input_ids'][1:]) for d in batch]
+    return torch.utils.data.default_collate(tuple_batch)
 
 @dataclass
 class CoreLightningTrainer(cli.ITrainer):
@@ -43,7 +43,7 @@ class CoreLightningTrainer(cli.ITrainer):
     train_dataloader_factory:Callable[..., torch.utils.data.DataLoader]=field_default(lambda: Factory())
     val_dataset_factory:Callable[..., torch.utils.data.dataset.Dataset]=field_default(lambda: Factory())
     val_dataloader_factory:Callable[..., torch.utils.data.DataLoader]=field_default(lambda: Factory())
-    datamodule_factory:Callable[..., lightning.LightningDataModule]=field_default(lambda: Factory())
+    datamodule_factory:Callable[..., lightning.LightningDataModule]|None=None
     optimizer_factory:Callable[..., torch.optim.Optimizer]=field_default(lambda: Factory(torch.optim.Adam))
     loss_fn_factory : Callable[..., torch.nn.Module] = field_default(lambda: Factory(torch.nn.CrossEntropyLoss, ignore_index=-1))
     loss_wrapper_factory : Callable[..., torch.autograd.Function | None] = field_default(lambda: Factory())

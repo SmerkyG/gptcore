@@ -61,11 +61,5 @@ class TokenizeMergeAndSplit(Callable):
         self.block_size = block_size
 
     def forward(self, dataset):
-        return dataset.map(lambda x: tokenize_join_and_slice(x, self.tokenizer, self.block_size))#, batched=True, remove_columns=dataset.column_names)
-
-# def split_max_tokens_fn(data, tokenizer, max_tokens):
-#     temp_max_length = getattr(tokenizer, 'model_max_length', None)
-#     tokenizer.model_max_length=int(1e30) # to avoid warnings when tokenizing long strings
-#     toks = tokenizer(data['text'])['input_ids']
-#     return [toks[i*max_tokens:(i+1)*max_tokens] for i in range(len(toks) // max_tokens)]
+        return dataset.map(lambda x: tokenize_join_and_slice_input_ids(x, self.tokenizer, self.block_size))#, batched=True, remove_columns=dataset.column_names)
 
