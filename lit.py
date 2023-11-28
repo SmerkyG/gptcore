@@ -259,10 +259,11 @@ class CoreLightningModel(LightningModule):
             dt = t - self.last_iter_time
             self.total_runtime += dt
         else:
+            self.total_runtime = 0.0001
             dt = 1.0
         self.last_iter_time = t
 
-        if (batch_idx + 1) % self.trainer.log_every_n_steps == 0:
+        if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
             ms_since = (self.total_runtime - self.last_log_runtime) * 1000.
             ktok_per_sec = (self.tokens_processed - self.tokens_processed_prev_log) / ms_since
             ms_per = ms_since / self.trainer.log_every_n_steps
@@ -311,6 +312,7 @@ class CoreLightningModel(LightningModule):
             # on_epoch causes this to be logged in aggregate rather than per batch
             self.log('val/'+name, metric.compute(), on_epoch=True, rank_zero_only=True)
             metric.clear()
+        self.log("tokens", float(self.tokens_processed), on_epoch=True, rank_zero_only=True)
         return logits
 
     def on_validation_epoch_end(self):
