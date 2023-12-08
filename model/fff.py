@@ -7,6 +7,8 @@ from torch import Tensor
 import model.core
 import model.interface
 
+from fastfeedforward import FFF
+
 class FastFeedForwardSublayer(model.core.TransformerLayerPart, model.interface.IFeedForwardSubLayer):
     def __init__(self):
         super().__init__()
