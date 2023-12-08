@@ -6,3 +6,4 @@ einops
 transformers
 datasets
 wandb
+fastfeedforward

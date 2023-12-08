@@ -33,4 +33,7 @@ class HParams():
    
     dropout : float = 0.0   # dropout is more useful for finetuning than pretraining
 
+    train_hardened : bool = False   # train FFF layers with hardened boundaries
+    n_leaf : int = 32               # leaf count, must be power of 2
+
     rotary_positional_embedding_factory : Callable[..., IQueryKeyEmbedding | nn.Identity] = field_default(lambda: Factory(nn.Identity))
