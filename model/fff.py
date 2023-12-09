@@ -9,7 +9,7 @@ import model.interface
 
 from fastfeedforward import FFF
 
-class FastFeedForwardSublayer(model.core.TransformerLayerPart, model.interface.IFeedForwardSubLayer):
+class FastFeedForwardSubLayer(model.core.TransformerLayerPart, model.interface.IFeedForwardSubLayer):
     def __init__(self):
         super().__init__()
         hp = self.hparams
