@@ -23,7 +23,7 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained(
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'FFF B32L12D768Q16V4 AdamW'
+LOG_NAME = 'FFF B48L12D768Q16V4 AdamW'
 
 cli.Config(
     seed_everything = 1337,
