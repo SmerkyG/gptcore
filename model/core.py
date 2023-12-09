@@ -283,6 +283,7 @@ class GradientCheckpointing(nn.Module):
         super().__init__()
         self.module = module_factory()
     def forward(self, x, *_):
+        x.requires_grad_(True)
         return torch.utils.checkpoint.checkpoint(self.module, x)
 
 class Unembedding(nn.Module):
