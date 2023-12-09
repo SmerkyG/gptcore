@@ -14,8 +14,8 @@ class FastFeedForwardSublayer(model.core.TransformerLayerPart, model.interface.I
         super().__init__()
         hp = self.hparams
         d_ff = int(hp.d_model * hp.feedforward_d_model_ratio)
-        d_leaf = d_ff // n_leaf
-        depth = int(math.log2(n_leaf))
+        d_leaf = d_ff // hp.n_leaf
+        depth = int(math.log2(hp.n_leaf))
         activation = lambda x: torch.square(torch.relu(x))
         self.fff = FFF(
             hp.d_model,
