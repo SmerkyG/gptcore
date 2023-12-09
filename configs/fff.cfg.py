@@ -43,8 +43,8 @@ cli.Config(
 
             d_v_ratio=1,
 
-            rotary_positional_embedding_factory = lambda hp: (
-                posemb.RotaryEmbedding(hp.max_sequence_length, hp.d_model // hp.n_head)
+            rotary_positional_embedding_factory = lambda sequence_length, d_query: (
+                posemb.RotaryEmbedding(sequence_length, d_query)
             ),
         ),
         layer_factory=lambda: model.core.TransformerLayer(

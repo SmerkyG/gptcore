@@ -51,9 +51,11 @@ class Llama2AttentionSubLayer(model.core.TransformerLayerPart, model.interface.I
 
         self.w_out = nn.Linear(QH * V, C, bias=False)
 
-        self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(hparams)
+        self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(
+            hparams.max_sequence_length, Q
+        )
 
-        self.attention_module = attention_factory(hparams=hparams, layer_id=layer_id)
+        self.attention_module = attention_factory()
 
     def forward(self, xq : Tensor, xk : Tensor, xv : Tensor, recurrent_memory : Optional[Tensor] = None):       
         hparams = self.hparams
