@@ -23,7 +23,7 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained(
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'FFF L12D768H16K4CM2Adam'
+LOG_NAME = 'FFF L12D768Q16V4 AdamW'
 
 cli.Config(
     seed_everything = 1337,
@@ -53,10 +53,11 @@ cli.Config(
     ),
 
     trainer_factory = lambda: lit.CoreLightningTrainer(
-        optimizer_factory = lambda params: torch.optim.Adam(
+        optimizer_factory = lambda params: torch.optim.AdamW(
             params=params,
             lr=1e-3,
             betas=(0.9, 0.95),
+            weight_decay=0.1
         ),
         lightning_trainer_factory = lambda: lightning.Trainer(
             enable_progress_bar=False,
@@ -69,7 +70,7 @@ cli.Config(
             log_every_n_steps=5,
             logger = [
                 #lightning.pytorch.loggers.CSVLogger(save_dir="."),
-                #lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
+                lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
             ],
         ),
         datamodule_factory=lambda: dataset.DM(
