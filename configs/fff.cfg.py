@@ -27,7 +27,7 @@ LOG_NAME = 'FFF B64L12D768Q16V4 AdamW'
 
 cli.Config(
     seed_everything = 1337,
-    compile = True,
+    compile = False,
 
     model_factory = lambda: model.core.Decoder(
         hparams = model.hparams.HParams(

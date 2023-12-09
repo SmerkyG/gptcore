@@ -278,15 +278,15 @@ class TransformerLayer(TransformerLayerPart):
 
         return x
 
+# Does not work with torch.compile
 # if you get an error mentioning "source", update pytorch
 class GradientCheckpointing(nn.Module):
     def __init__(self, module_factory : Callable[..., nn.Module]):
         super().__init__()
         self.module = module_factory()
-    def forward(self, x, *_):
-        x.requires_grad_(True)
+    def forward(self, *args):
         return torch.utils.checkpoint.checkpoint(
-            self.module, x, use_reentrant=False
+            self.module, *args, use_reentrant=False
         )
 
 class Unembedding(nn.Module):
