@@ -39,6 +39,7 @@ cli.Config(
             d_model=768,
 
             feedforward_d_model_ratio=4,
+            n_kv_head_ratio=0.25,
 
             d_v_ratio=1,
 
@@ -47,7 +48,7 @@ cli.Config(
             ),
         ),
         layer_factory=lambda: model.core.TransformerLayer(
-            self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(n_kv_head=4),
+            self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(),
             feedforward_sublayer_factory = lambda: model.fff.FastFeedForwardSubLayer(),
         ),
     ),
