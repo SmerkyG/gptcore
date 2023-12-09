@@ -15,7 +15,7 @@ import model.llama
 import model.fff
 import posemb
 
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 VOCAB_SIZE = 32000
 TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained(
     'mistralai/Mistral-7B-v0.1'
@@ -23,7 +23,7 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained(
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'FFF B64L12D768Q16V4 AdamW'
+LOG_NAME = 'FFF B32L12D768Q16V4 AdamW'
 
 cli.Config(
     seed_everything = 1337,
