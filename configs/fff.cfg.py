@@ -15,7 +15,7 @@ import model.llama
 import model.fff
 import posemb
 
-BATCH_SIZE = 8
+BATCH_SIZE = 64
 VOCAB_SIZE = 32000
 TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained(
     'mistralai/Mistral-7B-v0.1'
