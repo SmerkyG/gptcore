@@ -47,10 +47,12 @@ cli.Config(
                 posemb.RotaryEmbedding(sequence_length, d_query)
             ),
         ),
-        layer_factory=lambda: model.core.TransformerLayer(
-            self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(),
-            feedforward_sublayer_factory = lambda: model.fff.FastFeedForwardSubLayer(),
-        ),
+        layer_factory=lambda: model.core.GradientCheckpointing(
+            module_factory = lambda: model.core.TransformerLayer(
+                self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(),
+                feedforward_sublayer_factory = lambda: model.fff.FastFeedForwardSubLayer(),
+            ),
+        )
     ),
 
     trainer_factory = lambda: lit.CoreLightningTrainer(
@@ -67,12 +69,12 @@ cli.Config(
             #val_check_interval=1024, # new
             precision = 'bf16-mixed',
             accumulate_grad_batches=1,
-            gradient_clip_val=0.5,
+            gradient_clip_val=1.0,
             log_every_n_steps=5,
             logger = [
                 #lightning.pytorch.loggers.CSVLogger(save_dir="."),
                 lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
-            ],
+            ]
         ),
         datamodule_factory=lambda: dataset.DM(
             dataset_path='dataset/pile.py', 

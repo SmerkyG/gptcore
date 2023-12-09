@@ -278,6 +278,13 @@ class TransformerLayer(TransformerLayerPart):
 
         return x
 
+class GradientCheckpointing(nn.Module):
+    def __init__(self, module_factory : Callable[..., nn.Module]):
+        super().__init__()
+        self.module = module_factory()
+    def forward(self, *args):
+        return torch.utils.checkpoint.checkpoint(self.module, *args)
+
 class Unembedding(nn.Module):
     def __init__(self, weight : Tensor = None):
         super().__init__()
