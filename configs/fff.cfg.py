@@ -36,9 +36,10 @@ cli.Config(
 
             n_layer=12,
             n_head=16,
+            n_leaf=32,
             d_model=768,
 
-            feedforward_d_model_ratio=4,
+            feedforward_d_model_ratio=8/3,
             n_kv_head_ratio=0.25,
 
             d_v_ratio=1,
@@ -50,7 +51,7 @@ cli.Config(
         layer_factory=lambda: model.core.GradientCheckpointing(
             module_factory = lambda: model.core.TransformerLayer(
                 self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(),
-                feedforward_sublayer_factory = lambda: model.fff.FastFeedForwardSubLayer(),
+                feedforward_sublayer_factory = lambda: model.llama.Llama2FeedForwardSubLayer(),
             ),
         )
     ),
