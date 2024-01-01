@@ -42,7 +42,7 @@ cli.Config(
             rotary_positional_embedding_factory = lambda sequence_length, d_query: posemb.RotaryEmbedding(sequence_length, d_query),
         ),
         layer_factory=lambda: model.core.TransformerLayer(
-            self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(n_kv_head=6),
+            self_attention_sublayer_factory = lambda: model.llama.Llama2AttentionSubLayer(),
             feedforward_sublayer_factory = lambda: model.llama.Llama2FeedForwardSubLayer(),
         ),
     ),

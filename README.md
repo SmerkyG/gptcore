@@ -2,7 +2,7 @@
 
 ## ***FAST*** Modular code to **create** and **train** cutting edge LLMs
 
-**Crazy Fast:** Pre-train our custom 123M parameter LLM to ~2.8 loss against The Pile in just **ten minutes** on a consumer grade GeForce RTX™ 4090
+**Crazy Fast:** Pre-train our custom 123M parameter LLM to ~3.5 validation loss against The Pile in just **twenty minutes** on a consumer grade GeForce RTX™ 4090
 
 **Batteries included:** Comes with components and full config file setups for state of the art models like RWKV5, LLaMa2, and Hyena
 
