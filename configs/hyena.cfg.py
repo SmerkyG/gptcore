@@ -54,11 +54,11 @@ cli.Config(
             enable_progress_bar=False,
             #enable_checkpointing=False,
             max_epochs=-1,
-            #val_check_interval=1024, # new
+            val_check_interval=1024,
             precision = 'bf16-mixed',
             accumulate_grad_batches=1,
             gradient_clip_val=0.5,
-            log_every_n_steps=5,
+            log_every_n_steps=20,
             logger = [
                 #lightning.pytorch.loggers.CSVLogger(save_dir="."),
                 #lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
