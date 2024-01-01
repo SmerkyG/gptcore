@@ -138,18 +138,22 @@ class DM(lightning.LightningDataModule):
 
     def get_dataloader(self, ds: Dataset, shuffle: bool|None = None):
         return DataLoader(ds, 
-                          #prefetch_factor=4, persistent_workers=True,
+                          #prefetch_factor=4, 
+                          persistent_workers=True,
                           batch_size=self.batch_size, 
                           shuffle=shuffle, 
-                          num_workers=self.num_workers, pin_memory=True, collate_fn=collate_target_tokens_offset_by_one_input_ids)
+                          num_workers=min(ds.n_shards, self.num_workers), pin_memory=True, collate_fn=collate_target_tokens_offset_by_one_input_ids)
 
     def get_dataset(self, split):
         tokenizer = self.tokenizer_factory()
         ds = datasets.load_dataset(path=self.dataset_path, streaming=True, split=split)
-        ds = ds.map(lambda x: dataset.tokenizer.tokenize_join_and_slice_input_ids(x, tokenizer, self.sequence_length), batched=True, remove_columns=ds.column_names)
+        ds = ds.map(lambda x: dataset.tokenizer.tokenize_crop_join_and_slice_input_ids(x, tokenizer, self.sequence_length, 8 if split == 'train' else 1), batched=True, remove_columns=ds.column_names)
+        #if split == 'train':
         ds = ds.shuffle(seed=self.seed)
-        return self.get_dataloader(ds, None if split == 'train' else False)
-
+        if split == 'validation':
+            ds = ds.take(1024)
+        return self.get_dataloader(ds, None)#None if split == 'train' else False)
+    
     def train_dataloader(self): return self.get_dataset('train')
     def val_dataloader(self): return self.get_dataset('validation')
 
@@ -163,8 +167,7 @@ class DM(lightning.LightningDataModule):
 #     num_workers:int=0
 #     seed:int|None=None
 #     def get_dataloader(self, ds: Dataset, shuffle: bool|None = None):
-#         return DataLoader(ds, batch_size=self.batch_size, shuffle=shuffle, num_workers=self.num_workers, pin_memory=True, collate_fn=collate_target_tokens_offset_by_one)
-    
+#         return DataLoader(ds, batch_size=self.batch_size, shuffle=shuffle, num_workers=self.num_workers, pin_memory=True, collate_fn=collate_target_tokens_offset_by_one, persistent_workers=True)
 #     # split can be train, validation, or test
 #     def get_dataset(self, split):
 #         tokenizer = self.tokenizer_factory()
