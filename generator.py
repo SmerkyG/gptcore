@@ -14,8 +14,9 @@ class Generator(nn.Module):
     def __init__(self, model : IEncoderDecoder, sampler : nn.Module = sampler.RepetitionPenalizer(sampler.TopKPTailFreeSampler())):
         super().__init__()
 
-        assert(isinstance(model, IEncoderDecoder))
-
+        # FIXME - unwrap model if compiled
+        #assert(isinstance(model, IEncoderDecoder))
+        
         self.model = model
         self.sampler = sampler
         # FIXME - ensure hparams exists typesafely somehow
