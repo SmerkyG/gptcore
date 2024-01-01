@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+import torch.utils.checkpoint
 
 import util.logger as logger
 import mask
@@ -278,7 +279,10 @@ class TransformerLayer(TransformerLayerPart):
 
         return x
 
+
 # Does not work with torch.compile
+# FIXME - compile may work w/ torch 2.1.2, but may require dummy value for reentrant or no non-tensors (Nones) to be passed in to forward() calls
+# FIXME - even in 2.1.2 compile still appears not to work w/ deepspeed checkpointing, but that may be fixable w/ custom re-implementation of ds ckpt code
 # if you get an error mentioning "source", update pytorch
 class GradientCheckpointing(nn.Module):
     def __init__(self, module_factory : Callable[..., nn.Module]):
