@@ -57,7 +57,7 @@ class Attention(TransformerLayerPart, IAttention):
 
 class LinearAttention(TransformerLayerPart, IAttention):
     # unscaled softmax-free attention (unscaled because we're presuming norm will be taken afterwards)
-    def __init__(self, mul_mask_factory : Callable[..., mask.IMulMask] = Factory(mask.CausalMulMask)):
+    def __init__(self, mul_mask_factory : Callable[..., mask.IMulMask] = Factory(mask.CausalMulMaskZeros)):
         super().__init__()
         self.mul_mask = mul_mask_factory(self.hparams.max_sequence_length, self.hparams.n_head, self.layer_id)
 

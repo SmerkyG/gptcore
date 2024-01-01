@@ -27,9 +27,13 @@ class IMulMask():
     def __call__(self, q:Tensor):
         raise NotImplementedError
 
-def causal_mul_mask(T):
+def causal_mul_mask_inf(T):
     mask = torch.ones(T, T)
-    mask = mask.masked_fill(not mask.tril(), float('-inf')) # (T, T)
+    mask = mask.masked_fill(mask.tril() == 0, float('-inf')) # (T, T)
+    return mask
+
+def causal_mul_mask_zeros(T):
+    mask = torch.ones(T, T).tril() # (T, T)
     return mask
 
 def causal_bias_mask(T):
@@ -49,18 +53,31 @@ class NoMulMask(nn.Module, IMulMask):
     def forward(self, q:Tensor):
         return 1.0
 
-class CausalMulMask(nn.Module, IMulMask):
+class CausalMulMaskInf(nn.Module, IMulMask):
     # using first instance as a cache so we don't waste memory by duplicating our registered buffers per layer
     cache = None
     def __init__(self, block_size : int, n_heads : int, layer_id : int):
         super().__init__()
-        if CausalMulMask.cache is None:
-            CausalMulMask.cache = self
+        if CausalMulMaskInf.cache is None:
+            CausalMulMaskInf.cache = self
             T = block_size
-            self.register_buffer('mask', causal_mul_mask(T))
+            self.register_buffer('mask', causal_mul_mask_inf(T))
 
     def forward(self, q:Tensor):
-        return CausalMulMask.cache.mask
+        return CausalMulMaskInf.cache.mask
+
+class CausalMulMaskZeros(nn.Module, IMulMask):
+    # using first instance as a cache so we don't waste memory by duplicating our registered buffers per layer
+    cache = None
+    def __init__(self, block_size : int, n_heads : int, layer_id : int):
+        super().__init__()
+        if CausalMulMaskZeros.cache is None:
+            CausalMulMaskZeros.cache = self
+            T = block_size
+            self.register_buffer('mask', causal_mul_mask_zeros(T))
+
+    def forward(self, q:Tensor):
+        return CausalMulMaskZeros.cache.mask
 
 class CausalBiasMask(nn.Module, IBiasMask):
     # using first instance as a cache so we don't waste memory by duplicating our registered buffers per layer
@@ -95,4 +112,4 @@ class AlibiMask(nn.Module, IBiasMask):
             self.register_buffer('mask', alibi_mask(T, H))
 
     def forward(self, q:Tensor):
-        return AlibiMask.cache.mask
+        return AlibiMask.cache.mask[:, :q.size(-2), :q.size(-2)]
