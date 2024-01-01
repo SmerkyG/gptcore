@@ -89,24 +89,66 @@ class TimeLerp(TransformerLayerPart):
         return torch.lerp(x, self.offset(x), self.mix)
         #return x * self.mix + self.offset(x) * (1.0 - self.mix)
 
-class ReluSquared(nn.Module):
+class DataDependentTimeLerp(TransformerLayerPart):
     def __init__(self):
         super().__init__()
+        if self.layer_id < self.hparams.n_layer - 1:
+            self.offset = nn.ZeroPad2d((0, 0, 1, -1))
+            TIME_MIX_EXTRA_DIM = 32
+            self.mix = nn.Parameter(torch.pow(torch.linspace(0, 1, self.hparams.d_model), 1.0 - self.layer_id / self.hparams.n_layer))
+            self.lora_w0 = nn.Parameter(torch.empty(self.hparams.d_model, TIME_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+            self.lora_w1 = nn.Parameter(torch.zeros(TIME_MIX_EXTRA_DIM, self.hparams.d_model))
+
+    def forward(self, x):
+        if self.layer_id == self.hparams.n_layer - 1:
+            return x
+        mix = self.mix.view(1,1,1,-1) + torch.tanh(x @ self.lora_w0) @ self.lora_w1
+        return torch.lerp(x, self.offset(x), mix)
+
+class DataDependentTimeLerp2(TransformerLayerPart):
+    def __init__(self):
+        super().__init__()
+        if self.layer_id < self.hparams.n_layer - 1:
+            self.offset = nn.ZeroPad2d((0, 0, 1, -1))
+            TIME_MIX_EXTRA_DIM = 32
+            self.mix0 = nn.Parameter(torch.pow(torch.linspace(1, 0, self.hparams.d_model), 1.0 - self.layer_id / self.hparams.n_layer))
+            self.mix1 = nn.Parameter(torch.pow(torch.linspace(1, 0, self.hparams.d_model), 1.0 - self.layer_id / self.hparams.n_layer))
+            self.lora_w0 = nn.Parameter(torch.empty(self.hparams.d_model, TIME_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+            self.lora_w1 = nn.Parameter(torch.zeros(TIME_MIX_EXTRA_DIM, self.hparams.d_model))
+
+    def forward(self, x):
+        #if self.layer_id == self.hparams.n_layer - 1:
+        #    return x
+        sx = self.offset(x) - x
+        xx = x + sx * self.mix0
+        mix = self.mix1 + torch.tanh(xx @ self.lora_w0) @ self.lora_w1
+        return x + sx * mix
+
+class ReluSquared(nn.Module):
     def forward(self, x):
         return torch.square(torch.relu(x))
 
+class SquaredOffset(nn.Module):
+    def forward(self, x):
+        return torch.square(x) - 0.25
+
+class XMinusXPow3Approximated(nn.Module):
+    def forward(self, x):
+        return  1.6 * (x-x*x.abs())
+    
 class RWKVFeedForwardSubLayer(TransformerLayerPart, model.interface.IFeedForwardSubLayer):
-    def __init__(self, hidden_activation_factory : Callable = Factory(ReluSquared), gate_activation_factory : Callable = Factory(nn.Sigmoid)):
+    def __init__(self, 
+                 hidden_activation_factory : Callable = Factory(ReluSquared), 
+                 gate_activation_factory : Callable = Factory(nn.Sigmoid),
+                 time_mixer_factory : Callable = Factory(TimeLerp)):
         super().__init__()
-        self.layer_id = self.layer_id        
         D = self.hparams.d_model
         F = int(self.hparams.feedforward_d_model_ratio * self.hparams.d_model)
-        self.time_mixer_hidden = TimeLerp()
-        self.time_mixer_gate = TimeLerp()
+        self.time_mixer_hidden = time_mixer_factory()
+        self.time_mixer_gate = time_mixer_factory()
         self.w_hidden = nn.Linear(D, F, bias=False)
         self.hidden_activation = hidden_activation_factory()
-        # FIXME - rename this w_out once we stop using naming for init
-        self.w_shrink = nn.Linear(F, D, bias=False)
+        self.w_out = nn.Linear(F, D, bias=False)
         self.w_gate = nn.Linear(D, D, bias=False)
         self.gate_activation = gate_activation_factory()
 
@@ -115,9 +157,19 @@ class RWKVFeedForwardSubLayer(TransformerLayerPart, model.interface.IFeedForward
         x_gate = self.time_mixer_gate(x)
         hidden = self.w_hidden(x_hidden)
         hidden = self.hidden_activation(hidden)
+
+        # FIXME - try this, there was a paper that claimed it was better!
+        # hidden = norm.RMSNorm.F(hidden)
+
         gate = self.w_gate(x_gate)
         gate = self.gate_activation(gate)
-        return gate * self.w_shrink(hidden)
+        return gate * self.w_out(hidden)
+
+class IdentityFeedForwardSubLayer(TransformerLayerPart, model.interface.IFeedForwardSubLayer):
+    def __init__(self, hidden_activation_factory : Callable = Factory(torch.nn.GELU), gate_activation_factory : Callable = Factory(nn.Sigmoid)):
+        super().__init__()
+    def forward(self, x : Tensor):
+        return x
 
 class AttentionSubLayer(TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self,
@@ -328,7 +380,6 @@ class Transformer(nn.Module):
         for i in range(hparams.n_layer):
             TransformerLayerPart.layer_id = i
             self.layers.append(layer_factory())
-        #self.layers = nn.Sequential(*[layer_factory() for i in range(hparams.n_layer)])
 
         if share_embedding_weights:
             self.final_norm = nn.Identity()
