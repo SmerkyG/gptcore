@@ -102,7 +102,8 @@ class CoreLightningTrainer(cli.ITrainer):
             except Exception as e:
                 print(f"Skipping torch.compile due to error: {e}")
 
-        # #torch._dynamo.config.verbose=True
+        #torch._dynamo.config.verbose=True
+        #torch._dynamo.config.suppress_errors = True
         trainer.fit(lightning_model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=self.ckpt_path)
 
 import generator
@@ -147,15 +148,17 @@ class CoreLightningPredictor(cli.IPredictor):
             input_text = start_token_str + input_text
 
         # FIXME - move to int16
-        tokenized_input_text = torch.LongTensor(self.tokenizer(input_text)['input_ids'], device=self.device).unsqueeze(0)
+        tokenized_input_text = torch.tensor(self.tokenizer(input_text)['input_ids'], dtype=torch.long, device=self.device).unsqueeze(0)
 
         with self.ctx:
-            self.gen.ingest(tokenized_input_text)
+            with torch.inference_mode():
+                self.gen.ingest(tokenized_input_text)
 
     def predict(self, num_outputs:int):
         with self.ctx:
-            for next_token_tensor in self.gen.predict(num_outputs):
-                yield self.tokenizer.decode(next_token_tensor[0, ...])
+            with torch.inference_mode():
+                for next_token_tensor in self.gen.predict(num_outputs):
+                    yield self.tokenizer.decode(next_token_tensor[0, ...])
         
     # FIXME - add encode, get_state, set_state
 
@@ -190,6 +193,8 @@ class CoreLightningModel(LightningModule):
         #self.logger.experiment.config.update(dict(model=model_factory, optimizers=optimizers_factory))
 
         self.model = model_factory()
+        # FIXME - fucking _orig_mod when it's a compiled model..
+        #self.model = torch.compile(self.model)
         self.optimizer_factory = optimizer_factory
         self.loss_fn = loss_fn_factory()
         self.loss_wrapper = loss_wrapper_factory()
