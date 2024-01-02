@@ -12,6 +12,7 @@ import lit
 
 import model.core
 import model.rwkv
+import model.experimental.rwkv5_1
 
 BATCH_SIZE = 8
 VOCAB_SIZE = 50304
@@ -19,11 +20,12 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained('gpt2')
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'RWKV5.1 L12D768H12CM2Adam'
+LOG_NAME = 'RWKV5.1x L12D768H12CM3Adam'
 
 cli.Config(
     seed_everything = 1337,
     compile = True,
+    #pretest = False,
 
     model_factory = lambda: model.core.Decoder(
         hparams = model.hparams.HParams(
@@ -37,12 +39,13 @@ cli.Config(
             feedforward_d_model_ratio=3,
         ),
         layer_factory=lambda: model.core.TransformerLayer(
-            self_attention_sublayer_factory = lambda: model.rwkv.RWKV5_1_AttentionSubLayer(),
+            self_attention_sublayer_factory = lambda: model.experimental.rwkv5_1.RWKV5_1_AttentionSubLayer(),
             feedforward_sublayer_factory = lambda: model.rwkv.RWKV_ChannelMixSubLayer(),
         ),
     ),
 
     trainer_factory = lambda: lit.CoreLightningTrainer(
+        #optimizer_factory = lambda params: optimizer.striped_adamw.StripedAdamW(weight_decay=0,
         optimizer_factory = lambda params: torch.optim.Adam(
             params=params,
             lr=6e-4,
@@ -59,8 +62,9 @@ cli.Config(
             log_every_n_steps=20,
             logger = [
                 #lightning.pytorch.loggers.CSVLogger(save_dir="."),
-                #lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
+                lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
             ],
+            #strategy='deepspeed_stage_2',
         ),
         datamodule_factory=lambda: dataset.DM(
             dataset_path='dataset/pile.py', 

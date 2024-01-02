@@ -29,38 +29,11 @@ import model.interface
 import model.core
 from model.hparams import HParams
 
-class RWKVConfig():
-    def __init__(self, hparams : HParams):
-        super().__init__()
-        self.n_embd = hparams.d_model
-        self.n_head = hparams.n_head
-        self.n_kv_head = int(hparams.n_head * hparams.n_kv_head_ratio)
-        self.n_layer=hparams.n_layer
-        self.dim_ffn=int(hparams.feedforward_d_model_ratio * hparams.d_model)
-        self.dim_rk=int(hparams.d_qk_ratio * hparams.d_model)
-        self.dim_v=int(hparams.d_v_ratio * hparams.d_model)
-        self.ctx_len=hparams.max_sequence_length
-        self.head_size_divisor=8
+from model.rwkv import RWKVConfig
+from model.experimental.rwkv_inner import rwkv_inner
 
-# from PaLM paper (section 5)
-class L2Wrap(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, loss, y):
-        ctx.save_for_backward(y)
-        return loss
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        y = ctx.saved_tensors[0]
-        # to encourage the logits to be close to 0
-        factor = 1e-4 / (y.shape[0] * y.shape[1])
-        maxx, ids = torch.max(y, -1, keepdim=True)
-        gy = torch.zeros_like(y)
-        gy.scatter_(-1, ids, maxx * factor)
-        return (grad_output, gy)
-        
 class RWKV5_1_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
-    def __init__(self, chunk_len : int = 512, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
+    def __init__(self, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id
@@ -80,9 +53,6 @@ class RWKV5_1_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         assert args.dim_rk % self.n_head == 0
         assert args.dim_rk % self.n_kv_head == 0
         assert args.dim_v % self.n_kv_head == 0
-
-        self.chunk_len = chunk_len
-        assert self.ctx_len % self.chunk_len == 0
 
         with torch.no_grad():
             ratio_0_to_1 = layer_id / max(args.n_layer - 1, 1)  # 0 to 1
@@ -168,8 +138,6 @@ class RWKV5_1_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
             time_decay = time_decay.expand(reps, KVH).contiguous().view(H)
             time_faaaa = time_faaaa.expand(reps, KVH).contiguous().view(H)
 
-        k = k.transpose(-2, -1) # BHKT
-
         s = recurrent_memory
         if s is None:
             s = torch.zeros(B, H, K, V, device=r.device, dtype=r.dtype)  # state
@@ -177,97 +145,12 @@ class RWKV5_1_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
             s = s.contiguous().to(torch.bfloat16)
 
-        L = T
-        T = self.chunk_len
+        w = torch.exp(-torch.exp(time_decay)).unsqueeze(0).unsqueeze(-1).expand(1,T,H,K)
+        u = time_faaaa.float().unsqueeze(0).unsqueeze(-1).expand(1,H,K)
+        out, s = rwkv_inner(s, r, k, v, w, u)
 
-        if L == 1:
-            t_first = torch.exp(-torch.exp(time_decay)).unsqueeze(-1).unsqueeze(-1) # (H, 1, 1)
-            t_decay = time_faaaa.unsqueeze(-1).unsqueeze(-1) # (H, 1, 1)
-            out = torch.zeros(B, H, L, V, device=r.device, dtype=r.dtype) # output
-            for t in range(L):
-                rt = r[...,t:t+1,:]
-                kt = k[...,:,t:t+1]
-                vt = v[...,t:t+1,:]
-                at = kt @ vt
-                out[..., t:t+1, :] = (rt @ (t_first * at + s)).squeeze(1)
-                s = at + t_decay * s
-        else:
-            w = torch.exp(-torch.exp(time_decay)).unsqueeze(-1) # (H,1)
-            u = time_faaaa.unsqueeze(-1) # (H, 1)
-
-            ws = w.pow(T).reshape(1, H, 1, 1)
-            ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).repeat(H, 1) # (H,T)
-            w = w.repeat(1, T).pow(ind) # (H,T)
-
-            wk = w.reshape(1, H, 1, T)
-            wb = wk.transpose(-2, -1).flip(2) # (1, H, T, 1)
-
-            w = torch.cat([w[:, 1:], u], dim=1) # (H, T)
-            w = F.pad(w, (0, T))
-            w = torch.tile(w, [T])
-            w = w[:, :-T].reshape(-1, T, 2 * T - 1)
-            w = w[:, :, T-1:].reshape(1, H, T, T)
-
-            wk = wk.to(dtype=r.dtype)
-            wb = wb.to(dtype=r.dtype)
-            ws = ws.to(dtype=r.dtype)
-            
-            out = []
-            for i in range(L // T):
-                rr = r[:, :, i*T:i*T+T, :]
-                kk = k[:, :, :, i*T:i*T+T]
-                vv = v[:, :, i*T:i*T+T, :]
-
-                out.append((((rr @ kk) * w) @ vv).to(r.dtype)  +  ((rr @ s) * wb).to(r.dtype))
-
-                s = ws * s + (kk * wk) @ vv
-            out = torch.cat(out, dim=-2)
-        
-
-        out = out.transpose(1, 2).contiguous().view(B * L, H*V) # BHTS -> BTHS -> BTC
-        out = self.ln_x(out / self.args.head_size_divisor).view(B, L, H*V)
+        out = out.reshape(B*T, H*V)
+        out = self.ln_x(out / self.args.head_size_divisor).view(B, T, H*V)
 
         out = self.output(out * g)        
         return out
-
-class RWKV_ChannelMixSubLayer(model.core.TransformerLayerPart, model.interface.IFeedForwardSubLayer):
-    def __init__(self):
-        super().__init__()
-        hparams, layer_id = self.hparams, self.layer_id
-        args = RWKVConfig(hparams)
-        self.args = args
-        self.layer_id = layer_id
-        
-        with torch.no_grad():  # fancy init of time_mix
-            self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, args.n_embd)
-            for i in range(args.n_embd):
-                ddd[0, 0, i] = i / args.n_embd
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        
-        self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-        self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
-        self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
-
-    def post_init_fn(self, myself):
-        zero = [self.value, self.receptance]
-        for m in zero:
-            nn.init.zeros_(m.weight)
-        ortho = [self.key]
-        for m in ortho:
-            if m.weight.shape[0] > m.weight.shape[1]:
-                gain = math.sqrt(m.weight.shape[0] / m.weight.shape[1])
-            else:
-                gain = 1.0
-            nn.init.orthogonal_(m.weight, gain=gain)
-
-    def forward(self, x):
-        xx = self.time_shift(x)
-        xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-        xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        k = self.key(xk)
-        k = torch.square(torch.relu(k))
-        kv = self.value(k)
-        return torch.sigmoid(self.receptance(xr)) * kv

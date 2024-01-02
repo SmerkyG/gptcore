@@ -12,6 +12,7 @@ import lit
 
 import model.core
 import model.rwkv
+import model.experimental.rwkv6_0
 
 BATCH_SIZE = 8
 VOCAB_SIZE = 50304
@@ -19,11 +20,12 @@ TOKENIZER_FACTORY = lambda: transformers.AutoTokenizer.from_pretrained('gpt2')
 MAX_SEQUENCE_LENGTH = 1024
 
 LOG_PROJECT = 'gptcore'
-LOG_NAME = 'RWKV5.1 L12D768H12CM2Adam'
+LOG_NAME = 'RWKV6.0x L12D768H12CM3Adam'
 
 cli.Config(
     seed_everything = 1337,
     compile = True,
+    pretest = False,
 
     model_factory = lambda: model.core.Decoder(
         hparams = model.hparams.HParams(
@@ -35,9 +37,15 @@ cli.Config(
             d_model=768,
 
             feedforward_d_model_ratio=3,
+
+            d_qk_ratio=1,
+            d_v_ratio=1,
+
+            n_kv_head_ratio=1,
         ),
         layer_factory=lambda: model.core.TransformerLayer(
-            self_attention_sublayer_factory = lambda: model.rwkv.RWKV5_1_AttentionSubLayer(),
+            self_attention_sublayer_factory = lambda: model.experimental.rwkv6_0.RWKV6_0_AttentionSubLayer(),
+            #feedforward_sublayer_factory = lambda: model.core.RWKVFeedForwardSubLayer(),
             feedforward_sublayer_factory = lambda: model.rwkv.RWKV_ChannelMixSubLayer(),
         ),
     ),
@@ -59,8 +67,12 @@ cli.Config(
             log_every_n_steps=20,
             logger = [
                 #lightning.pytorch.loggers.CSVLogger(save_dir="."),
-                #lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
+                lightning.pytorch.loggers.WandbLogger(project=LOG_PROJECT, name=LOG_NAME),
             ],
+            #devices=1,
+            #strategy='ddp',
+            #strategy="deepspeed_stage_2",
+            #strategy='ddp_find_unused_parameters_true',
         ),
         datamodule_factory=lambda: dataset.DM(
             dataset_path='dataset/pile.py', 
