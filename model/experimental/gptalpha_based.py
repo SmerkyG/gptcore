@@ -38,12 +38,10 @@ def gptAB_parallel(q, k, v, w, kv_state = None, eps=1e-12):
     dt = (torch.arange(T, device=q.device)[:, None] - torch.arange(T, device=q.device)[None, :]).tril() # NOTE - tril is important to not break pow by causing infinities
     w = w.pow(dt)
     w = w.tril() # causality
-    w = w.to(q.dtype)
 
     attn = q @ k.mT
     attn = 1 + attn + 0.5 * attn.square() # taylor series approximation to exp
-    attn = attn * w
-    attn = attn.tril()
+    attn = (attn * w).to(q.dtype)
 
     # NOTE - we may eventually want denominator, a la rwkv4
     #attn = attn / attn.sum(-1, keepdim=True).clamp(eps)
