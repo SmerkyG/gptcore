@@ -69,43 +69,47 @@ def memtention_inner(s,q,p,kv,w,u):
     # @= p.mT # undo
     # if you eliminate steps 2 and 3 you get linear attention!
 
-    def parallel(p,q,k,v,w): # all (B,H,T,D)
-        A = w.cumprod(0)
+def memtention_recurrent(p_in, q_in, k_in, v_in, w_in, pk_state, pv_state):
+    L = p_in.size(-2)
+    out = []
+    for t in range(L):
+        q, p, k, v, w = q_in[t:t+1], p_in[t:t+1], k_in[t:t+1], v_in[t:t+1], w_in[t:t+1]
+        pk_state = (w.mT * pk_state) + p.mT @ k                         # PK
+        pv_state = (w.mT * pv_state) + p.mT @ v                         # PV
+        out.append( torch.softmax(q @ pk_state.mT, dim=-1) @ pv_state ) # 1Q @ KP -> 1P, 1P @ PV -> 1V
+    out = torch.cat(out, dim=-2)
+    return out, pk_state, pv_state
 
-        qk = (q @ k.mT).tril()                      # TQ @ KT -> TT    (weights by output [query] timeslot and key timeslot)
-        mem_attn = (qk @ (p/A)) * A                 # TT @ TP -> TP    (weights by output timeslot and key memoryslot)
-        mem_attn = torch.softmax(mem_attn, dim=-1)  # TP -> TP         (softmax over memory slots)
-        seq_attn = ((mem_attn*A) @ (p/A).mT).tril() # TP @ PT -> TT    (keep output timeslot but map key memoryslot back to a key/value timeslot)
-        return seq_attn @ v                         # TT @ TV -> TV    (apply key/value timeslot weights to values)
-    
+def memtention_parallel(p, q, k, v, w, pk_state, pv_state):
+    A = w.cumprod(-2)
+    qk = (q @ k.mT).tril()                      # TQ @ KT -> TT    (weights by output [query] timeslot and key timeslot)
+    mem_attn = (qk @ (p/A)) * A                 # TT @ TP -> TP    (weights by output timeslot and key memoryslot)
+    mem_attn = torch.softmax(mem_attn, dim=-1)  # TP -> TP         (softmax over memory slots)
+    seq_attn = ((mem_attn*A) @ (p/A).mT).tril() # TP @ PT -> TT    (keep output timeslot but map key memoryslot back to a key/value timeslot)
+    out = seq_attn @ v                          # TT @ TV -> TV    (apply key/value timeslot weights to values)
+
+    # FIXME - calculate pk_state, pv_state changes
+    return out, pk_state, pv_state
+
 def sanity_check():
-    T = 2
-    P,K,V = 3,3,3
+    T = 4
+    P,K,V = 5,3,3
     w = torch.rand(T,P)
     q = torch.rand(T,K)
     k = torch.rand(T,K)
     p = torch.rand(T,P)
     v = torch.rand(T,V)
-    pk = torch.zeros(P,K)
-    pv = torch.zeros(P,V)
+    pk_state = torch.zeros(P,K)
+    pv_state = torch.zeros(P,V)
 
     # recurrent
-    out = []
-    for t in range(T):
-        pk = (w[t:t+1].mT * pk) + p[t:t+1].mT @ k[t:t+1]
-        pv = (w[t:t+1].mT * pv) + p[t:t+1].mT @ v[t:t+1]
-        out.append( torch.softmax(q[t:t+1] @ pk.mT, dim=-1) @ pv )
-    out = torch.cat(out, dim=0)
+    out, _, _ = memtention_recurrent(p,q,k,v,w,pk_state,pv_state)
     print(out)
 
     # parallel
-    A = w.cumprod(0)
-    qk = (q @ k.mT).tril()                      # TQ @ KT -> TT    (weights by output [query] timeslot and key timeslot)
-    mem_attn = (qk @ (p/A)) * A                 # TT @ TP -> TP    (weights by output timeslot and key memoryslot)
-    mem_attn = torch.softmax(mem_attn, dim=-1)  # TP -> TP         (softmax over memory slots)
-    seq_attn = ((mem_attn*A) @ (p/A).mT).tril() # TP @ PT -> TT    (keep output timeslot but map key memoryslot back to a key/value timeslot)
-    out = seq_attn @ v                         # TT @ TV -> TV    (apply key/value timeslot weights to values)
+    out, _, _ = memtention_parallel(p,q,k,v,w,pk_state,pv_state)
     print(out)
 
-sanity_check()
-exit()
+if __name__ == "__main__":
+    sanity_check()
+    exit()
