@@ -41,19 +41,71 @@ def memtention_inner(s,q,p,kv,w,u):
 
 
     # simplified recurrence
-    # pks = w * ks + p.mT @ k # PK
-    # pvs = w * vs + p.mT @ v # PV
-    # out = torch.softmax(q @ pks.mT, dim=-1) @ pvs # 1Q @ KP -> 1P, 1P @ PV -> 1V
+    # pk = (w * pk) + p.mT @ k    # PK
+    # pv = (w * pv) + p.mT @ v    # PV
+    # out = torch.softmax(q @ pk.mT, dim=-1) @ pv # 1Q @ KP -> 1P, 1P @ PV -> 1V
 
-    if L == 1:
-        pkv = p @ kv
-        ram_pk, ram_pv = (s + u * pkv).split()
-        # attention 1Q @ KP -> 1P, 1P @ PV -> 1V
-        out = torch.softmax(q @ ram_pk.mT, dim=-1) @ ram_pv
-        s = w * s + pkv
-        return out, s
-    else:
-        # FIXME - implement parallel and recurrent chunked version
+    # non-decayed simplified recurrence
+    # pk = pk + p.mT @ k    # PK
+    # pv = pv + p.mT @ v    # PV
+    # out = torch.softmax(q @ pk.mT, dim=-1) @ pv # 1Q @ KP -> 1P, 1P @ PV -> 1V
 
-        assert False
-            
+    # non-decayed parallel
+    # torch.softmax(q @ torch.cumsum(p.mT @ k, dim=-3).mT, dim=-1) @ torch.cumsum(p.mT @ v, dim=-3) # T1Q @ TKP -> T1P, T1P @ TPV -> T1V
+    #=torch.softmax(q @ torch.cumsum(k.mT @ p, dim=-3), dim=-1) @ torch.cumsum(p.mT @ v, dim=-3) # T1Q @ TKP -> T1P, T1P @ TPV -> T1V
+    #=torch.softmax((q @ k.mT).tril() @ p, dim=-2).unsqueeze(-2) @ torch.cumsum(p.mT @ v, dim=-3) # TT @ TP -> TP, T1P @ TPV -> T1V
+    #=(torch.softmax((q @ k.mT).tril() @ p, dim=-2) @ p.mT).tril() @ v # TT @ TP -> TP, TP @ PT @ TV -> TV
+
+    # 1. o = q @ k.mT          # TQ @ KT -> TT    (weights by output [query] timeslot and key timeslot)
+    # 2. o = o.tril() @ p      # TT @ TP -> TP    (weights by output timeslot and key memoryslot)
+    # 3. o = softmax(o) @ p.mT # TP @ PT -> TT    (keep output timeslot but map key memoryslot back to a key/value timeslot)
+    # 4. o = o.tril() @ v      # TT @ TV -> TV    (apply key/value timeslot weights to values)    
+
+    # this is interesting in terms of interpretation:
+    # steps 2 and 3 essentially translate from timeslot to memoryslot and then back to timeslot 'undoing' the operation
+    # but importantly applying softmax in the middle, to give us full traditional attention fidelity!
+    # its like 
+    # @= p    # do
+    # @= p.mT # undo
+    # if you eliminate steps 2 and 3 you get linear attention!
+
+    def parallel(p,q,k,v,w): # all (B,H,T,D)
+        A = w.cumprod(0)
+
+        qk = (q @ k.mT).tril()                      # TQ @ KT -> TT    (weights by output [query] timeslot and key timeslot)
+        mem_attn = (qk @ (p/A)) * A                 # TT @ TP -> TP    (weights by output timeslot and key memoryslot)
+        mem_attn = torch.softmax(mem_attn, dim=-1)  # TP -> TP         (softmax over memory slots)
+        seq_attn = ((mem_attn*A) @ (p/A).mT).tril() # TP @ PT -> TT    (keep output timeslot but map key memoryslot back to a key/value timeslot)
+        return seq_attn @ v                         # TT @ TV -> TV    (apply key/value timeslot weights to values)
+    
+def sanity_check():
+    T = 2
+    P,K,V = 3,3,3
+    w = torch.rand(T,P)
+    q = torch.rand(T,K)
+    k = torch.rand(T,K)
+    p = torch.rand(T,P)
+    v = torch.rand(T,V)
+    pk = torch.zeros(P,K)
+    pv = torch.zeros(P,V)
+
+    # recurrent
+    out = []
+    for t in range(T):
+        pk = (w[t:t+1].mT * pk) + p[t:t+1].mT @ k[t:t+1]
+        pv = (w[t:t+1].mT * pv) + p[t:t+1].mT @ v[t:t+1]
+        out.append( torch.softmax(q[t:t+1] @ pk.mT, dim=-1) @ pv )
+    out = torch.cat(out, dim=0)
+    print(out)
+
+    # parallel
+    A = w.cumprod(0)
+    qk = (q @ k.mT).tril()                      # TQ @ KT -> TT    (weights by output [query] timeslot and key timeslot)
+    mem_attn = (qk @ (p/A)) * A                 # TT @ TP -> TP    (weights by output timeslot and key memoryslot)
+    mem_attn = torch.softmax(mem_attn, dim=-1)  # TP -> TP         (softmax over memory slots)
+    seq_attn = ((mem_attn*A) @ (p/A).mT).tril() # TP @ PT -> TT    (keep output timeslot but map key memoryslot back to a key/value timeslot)
+    out = seq_attn @ v                         # TT @ TV -> TV    (apply key/value timeslot weights to values)
+    print(out)
+
+sanity_check()
+exit()
