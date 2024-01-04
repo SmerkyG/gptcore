@@ -11,8 +11,6 @@ You may obtain a copy of the License at
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
 
-from util.config import Factory
-
 from typing import Callable, Any, Optional, Tuple, List, Iterable, Callable
 
 import math
@@ -23,6 +21,50 @@ import torch.nn.functional as F
 
 from torch import Tensor
 
+from .rwkv_inner import rwkv_inner
+
+def rwkv5_2_recurrent(s, r_in, k_in, v_in, w_in, u):
+    L = r_in.size(-2)
+    out = []
+    for t in range(L):
+        r, k, v = r_in[...,t:t+1,:], k_in[...,t:t+1,:], v_in[...,t:t+1,:]
+        w = w_in[...,t:t+1,:,:]
+        kv = k.mT @ v # KV
+        out.append( r @ (s + u.mT * kv) ) # 1K @ (KV + 1)
+        s = (w.mT * s) + kv # KV
+    out = torch.cat(out, dim=-2)
+    return out, s
+
+def sanity_check():
+    T = 6
+    B = 1
+    H = 1
+    K,V = 3,5
+    r = torch.rand(B,H,T,K)
+    k = torch.rand(B,H,T,K)
+    v = torch.rand(B,H,T,V)
+    w = torch.ones(B,T,H,K)/math.e #torch.rand(1,1,H,K).expand(B,T,H,K)
+    u = torch.rand(  1,H,K)
+    s = torch.zeros(B,H,K,V)
+
+    precision_dtype, precision_min_val = torch.float32, 0.02 # good for fp32 
+    #precision_dtype, precision_min_val = torch.float64, 1e-10 # good for fp64   
+    w = w.clamp(precision_min_val)
+
+    # recurrent
+    out, _ = rwkv5_2_recurrent(s,r,k,v,w,u)
+    print(out)
+
+    # parallel
+    out, _ = rwkv_inner(s,r,k,v,w,u,chunk_len=3)
+    print(out)
+
+if __name__ == "__main__":
+    sanity_check()
+    exit()
+
+from util.config import Factory
+
 import posemb.interface
 
 import model.interface
@@ -30,7 +72,6 @@ import model.core
 from model.hparams import HParams
 
 from model.rwkv import RWKVConfig
-from model.experimental.rwkv_inner import rwkv_inner
 
 class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
