@@ -4,19 +4,20 @@ import torch.nn.functional as F
 
 from torch import Tensor
 
-def rwkv_inner(s,r,k,v,w,u):
+# 32 is optimal chunk length (longer will use too much memory, shorter is inefficient)
+def rwkv_inner(s,r,k,v,w,u,chunk_len=32):
     """
     expects
     s : (B,H,K,V) # recurrent kv state
-    r : (B,L,H,K)
-    k : (B,L,H,K)
-    v : (B,L,H,V)
+    r : (B,H,L,K)
+    k : (B,H,L,K)
+    v : (B,H,L,V)
     w : (B,L,H,K) or (1,L,H,K)
-    u : (L,H,K)
+    u : (1,H,K)
     """
     B,H,L,K = k.size()
     V = v.size(-1)
-    T = 32 # optimal chunk length (longer will use too much memory, shorter is inefficient)
+    T = chunk_len
 
     if L == 1:
         kv = k @ v
@@ -40,21 +41,21 @@ def rwkv_inner(s,r,k,v,w,u):
         # calculate cumulative decay in log space where it won't overflow
         w_log = w.transpose(-3,-2).float().log() # (1,H,L,K) or (B,H,L,K)
 
+        w_log_cum = w_log.cumsum(dim=-2) # (1,H,L,K) or (B,H,L,K)
+        w_log_cum = torch.cat([w_log_cum, w_log_cum[:,:,-1:]], dim=-2) # (1,H,L+1,K) or (B,H,L+1,K)
+
         # chunked view of w_log
         wc_log = w_log.view(w.size(0),H,N,T,K)
         # ws decays the entire current state (representing t-1) to the prior block (t-2)
         ws = wc_log.sum(dim=-2, keepdim=True) # 1HN1K or BHN1K
         # wk is the decay to the end of the current block, since it will be applied at the next iteration when current (t) becomes prior (t-1)
-        wk = ws - wc_log.cumsum(dim=3) # 1HNTK or BHNTK (w^(T-1) ... w^0)
+        wk = ws - wc_log.cumsum(dim=-2) - wc_log # 1HNTK or BHNTK (w^(T-2) ... w^-1)
         # w_intra is the decay from the beginning of the current block (t), since it will be applied to current queries (t) against prior state (representing keys+values up to but not including block t)
-        w_intra = wc_log.cumsum(dim=3) # 1HNTK or BHNTK (w^0 ... w^(T-1))
+        w_intra = wc_log.cumsum(dim=-2) # 1HNTK or BHNTK (w^0 ... w^(T-1))
 
         ws = list(ws.exp().to(r.dtype).unbind(dim=-3)) # N x 1H1K or BH1K
         wk = wk.exp().to(r.dtype) # 1HNTK or BHNTK
         w_intra = w_intra.exp().to(r.dtype) # 1HNTK or BHNTK
-
-        w_log_cum = w_log.cumsum(dim=-2) # (1,H,L,K) or (B,H,L,K)
-        w_log_cum = torch.cat([w_log_cum, w_log_cum[:,:,-1:]], dim=-2) # (1,H,L+1,K) or (B,H,L+1,K)
 
         u = u.transpose(0,1).to(r.dtype) # (H,1,K)
 
