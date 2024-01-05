@@ -38,7 +38,7 @@ def rwkv6_0_recurrent(s, r_in, k_in, v_in, w_in, u):
 def sanity_check():
     torch.manual_seed(1337)
     
-    T = 6
+    T = 9
     B = 1
     H = 1
     K,V = 3,5
@@ -107,26 +107,25 @@ class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
             for i in range(args.n_embd):
                 ddd[0, 0, i] = i / args.n_embd
 
-        self.x_maa = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        self.r_maa = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        self.w_maa = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        self.k_maa = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        self.v_maa = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        self.g_maa = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        TIME_MIX_EXTRA_DIM = 32
-        self.tm_w1 = nn.Parameter(torch.empty(args.n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
-        self.tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, args.n_embd))
-        W_MIX_EXTRA_DIM = 64
-        self.td_w1 = nn.Parameter(torch.empty(args.n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
-        self.td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, args.n_embd))
+            self.x_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.r_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.w_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.k_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.v_maa = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
+            self.g_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            TIME_MIX_EXTRA_DIM = 32
+            self.tm_w1 = nn.Parameter(torch.empty(args.n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
+            self.tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, args.n_embd))
+            W_MIX_EXTRA_DIM = 64
+            self.td_w1 = nn.Parameter(torch.empty(args.n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+            self.td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, args.n_embd))
 
-        with torch.no_grad():
             # fancy time_decay
             k_dim_att = args.n_kv_head * self.k_head_size
             decay_speed = torch.ones(k_dim_att)
             for n in range(k_dim_att):
                 decay_speed[n] = -6 + 5 * (n / max(k_dim_att - 1, 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed.reshape(args.n_kv_head, self.k_head_size)) # (KVH, K)
+            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_kv_head, self.k_head_size)) # (KVH, K)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
             tmp = torch.zeros(k_dim_att)
@@ -193,8 +192,16 @@ class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
 
         r, k = self.rotary_positional_embedding((r, k))
 
-        #r = F.softplus(r).to(r.dtype)
-        #k = F.softplus(k).to(r.dtype)
+        # support for grouped-query attention
+        # if there are fewer k/v heads than total heads, repeat them until the number matches
+        time_decay = self.time_decay.float() # (KVH,K)
+        time_first = self.time_first.float() # (KVH,K)
+        if KVH < H:
+            reps = H // KVH
+            k = k[:,:,None,:,:].expand(B, KVH, reps, T, K).contiguous().view(B, H, T, K)
+            v = v[:,:,None,:,:].expand(B, KVH, reps, T, V).contiguous().view(B, H, T, V)
+            time_decay = time_decay.expand(reps, KVH, K).contiguous().view(H, K)
+            time_first = time_first.expand(reps, KVH, K).contiguous().view(H, K)
 
         s = recurrent_memory
         if s is None:
@@ -203,13 +210,11 @@ class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
             s = s.contiguous().to(torch.bfloat16)        
 
-        w = self.time_decay.unsqueeze(0).unsqueeze(0) # 11HK
-        w = w + (torch.tanh(wx @ self.td_w1) @ self.td_w2).float().view(B, T, H, K) # BTHK
-        w = torch.exp(-torch.exp(w.float()))
+        w = time_decay.unsqueeze(0).unsqueeze(0) # 11HK
+        w = w + (torch.tanh(wx @ self.td_w1) @ self.td_w2).view(B, T, H, K) # BTHK
+        w = torch.exp(-torch.exp(w))
 
-        # FIXME - float?
-        u = self.time_first.unsqueeze(0).to(r.dtype) # 1HK
-        #u = self.time_first.unsqueeze(-2).to(r.dtype) # H1K (mamba style)
+        u = time_first.unsqueeze(0) # 1HK
 
         out, s = rwkv_inner(s, r, k, v, w, u)
 

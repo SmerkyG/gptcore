@@ -108,9 +108,6 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
             self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
             self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
 
-            # FIXME - below code is for when rwkv5 changed to use bigger embedding sized decay rates, not one entry just per head, but not sure how to integrate it
-            # FIXME - not sure this can really work when dim_rk != dim_v... doesn't some decay apply to the v dimension of the KxV state?
-
             # fancy time_decay
             k_dim_att = args.n_kv_head * self.k_head_size
             decay_speed = torch.ones(k_dim_att)
@@ -178,9 +175,6 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         v = self.value(vx).view(B, T, KVH, V).transpose(1, 2)    # BTHV
         g = F.silu(self.gate(gx))
         
-        #r = F.softplus(r)
-        #k = F.softplus(k)
-
         r, k = self.rotary_positional_embedding((r, k))
 
         # support for grouped-query attention
