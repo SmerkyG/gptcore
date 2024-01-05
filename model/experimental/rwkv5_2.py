@@ -23,17 +23,16 @@ from torch import Tensor
 
 from .rwkv_inner import rwkv_inner
 
-def rwkv5_2_recurrent(s, r_in, k_in, v_in, w_in, u):
+def rwkv5_2_recurrent(r_in, k_in, v_in, w_in, u, kv_state):
     L = r_in.size(-2)
     out = []
     for t in range(L):
-        r, k, v = r_in[...,t:t+1,:], k_in[...,t:t+1,:], v_in[...,t:t+1,:]
-        w = w_in[...,t:t+1,:,:]
+        r, k, v, w = r_in[...,t:t+1,:], k_in[...,t:t+1,:], v_in[...,t:t+1,:], w_in[...,t:t+1,:]
         kv = k.mT @ v # KV
-        out.append( r @ (s + u.mT * kv) ) # 1K @ (KV + 1)
-        s = (w.mT * s) + kv # KV
+        out.append( r @ (kv_state + u.mT * kv) ) # 1K @ (KV + 1)
+        kv_state = (w.mT * kv_state) + kv # KV
     out = torch.cat(out, dim=-2)
-    return out, s
+    return out, kv_state
 
 def sanity_check():
     T = 6
@@ -43,20 +42,20 @@ def sanity_check():
     r = torch.rand(B,H,T,K)
     k = torch.rand(B,H,T,K)
     v = torch.rand(B,H,T,V)
-    w = torch.ones(B,T,H,K)/math.e #torch.rand(1,1,H,K).expand(B,T,H,K)
-    u = torch.rand(  1,H,K)
-    s = torch.zeros(B,H,K,V)
+    w = torch.rand(B,H,T,K)
+    u = torch.rand(1,H,1,K)
+    kv_state = torch.zeros(B,H,K,V)
 
     precision_dtype, precision_min_val = torch.float32, 0.02 # good for fp32 
     #precision_dtype, precision_min_val = torch.float64, 1e-10 # good for fp64   
     w = w.clamp(precision_min_val)
 
     # recurrent
-    out, _ = rwkv5_2_recurrent(s,r,k,v,w,u)
+    out, _ = rwkv5_2_recurrent(r,k,v,w,u,kv_state)
     print(out)
 
     # parallel
-    out, _ = rwkv_inner(s,r,k,v,w,u,chunk_len=3)
+    out, _ = rwkv_inner(r,k,v,w,u,kv_state,chunk_len=3)
     print(out)
 
 if __name__ == "__main__":
@@ -188,16 +187,16 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
             time_decay = time_decay.expand(reps, KVH, K).contiguous().view(H, K)
             time_faaaa = time_faaaa.expand(reps, KVH, K).contiguous().view(H, K)
 
-        s = recurrent_memory
-        if s is None:
-            s = torch.zeros(B, H, K, V, device=r.device, dtype=r.dtype)  # state
+        kv_state = recurrent_memory
+        if kv_state is None:
+            kv_state = torch.zeros(B, H, K, V, device=r.device, dtype=r.dtype)  # state
 
-        if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
-            s = s.contiguous().to(torch.bfloat16)        
+        if kv_state.dtype != r.dtype:
+            kv_state = kv_state.contiguous().to(r.dtype) 
 
-        w = torch.exp(-torch.exp(time_decay)).unsqueeze(0).expand(1,T,H,K)
-        u = time_faaaa.float().unsqueeze(0) # (1,H,K)
-        out, s = rwkv_inner(s, r, k, v, w, u)
+        w = torch.exp(-torch.exp(time_decay)).unsqueeze(1).expand(1,H,T,K)
+        u = time_faaaa.float().unsqueeze(1).expand(1,H,1,K)
+        out, s = rwkv_inner(r, k, v, w, u, kv_state)
 
         out = out.reshape(B*T, H*V)
         out = self.ln_x(out / self.args.head_size_divisor).view(B, T, H*V)

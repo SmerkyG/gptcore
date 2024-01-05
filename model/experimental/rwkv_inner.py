@@ -5,15 +5,15 @@ import torch.nn.functional as F
 from torch import Tensor
 
 # 32 is optimal chunk length (longer will use too much memory, shorter is inefficient)
-def rwkv_inner(s,r,k,v,w,u,chunk_len=32):
+def rwkv_inner(r,k,v,w,u,kv_state,chunk_len=32):
     """
     expects
-    s : (B,H,K,V) # recurrent kv state
     r : (B,H,L,K)
     k : (B,H,L,K)
     v : (B,H,L,V)
-    w : (B,L,H,K) or (1,L,H,K)
-    u : (1,H,K)
+    w : (B,H,L,K) or (1,H,L,K)
+    u : (1,H,1,K)
+    kv_state : (B,H,K,V)
     """
     B,H,L,K = k.size()
     V = v.size(-1)
@@ -21,9 +21,9 @@ def rwkv_inner(s,r,k,v,w,u,chunk_len=32):
 
     if L == 1:
         kv = k @ v
-        out = r @ (s + u * kv)
-        s = w * s + kv
-        return out, s
+        out = r @ (kv_state + u * kv)
+        kv_state = w * kv_state + kv
+        return out, kv_state
     else:
         # FIXME - support fast path for non-exact multiples
         # ensure it's an exact multiple
@@ -39,7 +39,7 @@ def rwkv_inner(s,r,k,v,w,u,chunk_len=32):
         w = w.clamp(precision_min_val)
 
         # calculate cumulative decay in log space where it won't overflow
-        w_log = w.transpose(-3,-2).float().log() # (1,H,L,K) or (B,H,L,K)
+        w_log = w.float().log() # (1,H,L,K) or (B,H,L,K)
 
         # prepend a zero to make it easy to get shifted version
         w_log = torch.cat([torch.zeros_like(w_log[:,:,:1]), w_log], dim=-2) # (1,H,L+1,K) or (B,H,L+1,K)
@@ -73,12 +73,11 @@ def rwkv_inner(s,r,k,v,w,u,chunk_len=32):
         w_inter = w_inter.exp().to(r.dtype) # 1HNTK or BHNTK
         w_intra = w_intra.exp().to(r.dtype) # 1HNTK or BHNTK
 
-        u = u.transpose(0,1).to(r.dtype) # (H,1,K)
-
         # chunked view of r, k, v
         r = r.view(B,H,N,T,K) 
         k = k.view(B,H,N,T,K) 
         v = v.view(B,H,N,T,V)
+        u = u.unsqueeze(2).to(r.dtype) # (1,H,1,1,K)
 
         # parallel calculation of all intra-chunk attention contributions
         wc_log_offset = w_log_cum[:,:,T//2:L:T,None,:] # B,H,N,1,K
@@ -86,7 +85,7 @@ def rwkv_inner(s,r,k,v,w,u,chunk_len=32):
         k_inv_decay = (wc_log_offset - w_log_cum[:,:,1:,:].view(w.size(0),H,N,T,K)).to(precision_dtype).exp() # B,H,N,T,K
         a = ((r*r_decay) @ (k*k_inv_decay).mT).to(r.dtype).tril(-1) # B,H,N,T,T
         # add u term to attention (NOTE - the tril(-1) above zeroed the diagonal)
-        a = a + torch.einsum('bhntk,bhntk->bhnt', r, u.unsqueeze(-2) * k).diag_embed()
+        a = a + torch.einsum('bhntk,bhntk->bhnt', r, u * k).diag_embed()
         out = a @ v # BHNTV
         # alternate way of adding in u
         #outc = outc + torch.einsum('bhntk,bhntk,bhntv->bhntv', rc, u.unsqueeze(-2) * kc, vc) 
@@ -98,15 +97,15 @@ def rwkv_inner(s,r,k,v,w,u,chunk_len=32):
         # recurrent calculation of all states
         states = []
         for i in range(N):
-            states.append(s)
-            s = s * ws[i] + wkv[i] # BHKV
+            states.append(kv_state)
+            kv_state = kv_state * ws[i] + wkv[i] # BHKV
             # equivalent non-precalced version
             #wkv = (k[...,i,:,:] * wk[...,i,:,:]).mT @ v[...,i,:,:]
-            #s = s * ws[i] + wkv
+            #kv_state = kv_state * ws[i] + wkv
         states = torch.stack(states, dim=2) # BHNKV       
 
         # parallel application of all r to states
         out = out + (r * w_intra) @ states # BHNTV
         out = out.view(B,H,L,V).transpose(1,2)
-        return out, s
+        return out, kv_state
             
