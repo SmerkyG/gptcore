@@ -93,7 +93,7 @@ from model.rwkv import RWKVConfig
 import norm
 
 class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
-    def __init__(self, rotary_positional_embedding_factory : Callable[..., posemb.interface.IQueryKeyEmbedding | nn.Identity] = Factory(nn.Identity)):
+    def __init__(self):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id
@@ -156,7 +156,7 @@ class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         self.output = nn.Linear(args.dim_v, args.n_embd, bias=False)
         self.gate = nn.Linear(args.n_embd, args.dim_v, bias=False)
 
-        self.rotary_positional_embedding = rotary_positional_embedding_factory()
+        self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(hparams.max_sequence_length, int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head))
 
         self.ln_x = nn.GroupNorm(self.n_kv_head, args.dim_v)
 
@@ -199,9 +199,9 @@ class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         rx = xx + sx * (self.r_maa + mr)
         gx = xx + sx * (self.g_maa + mg)
 
-        r = self.receptance(rx).view(B, T, H, K).transpose(1, 2) # BTHK
-        k = self.key(kx).view(B, T, KVH, K).transpose(1, 2)      # BTHK
-        v = self.value(vx).view(B, T, KVH, V).transpose(1, 2)    # BTHV
+        r = self.receptance(rx).view(B, T, H, K).transpose(1, 2) # BHTK
+        k = self.key(kx).view(B, T, KVH, K).transpose(1, 2)      # BHTK
+        v = self.value(vx).view(B, T, KVH, V).transpose(1, 2)    # BHTV
         g = F.silu(self.gate(gx))
 
         r, k = self.rotary_positional_embedding((r, k))
@@ -232,7 +232,7 @@ class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
 
         out, s = rwkv_inner(r, k, v, w, u, kv_state)
 
-        out = out.reshape(B*T, H*V)
+        out = out.transpose(1,2).reshape(B*T, H*V)
         out = self.ln_x(out / self.args.head_size_divisor).view(B, T, H*V)
 
         out = self.output(out * g)

@@ -106,6 +106,6 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len=32):
 
         # parallel application of all r to states
         out = out + (r * w_intra) @ states # BHNTV
-        out = out.view(B,H,L,V).transpose(1,2)
+        out = out.view(B,H,L,V)
         return out, kv_state
             
