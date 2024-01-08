@@ -37,7 +37,7 @@ GPT Core config files are used to set hyperparameters as well as select the comp
 
 Example config file:
 
-```
+```python
 import cli
 import model.core
 import lit
@@ -69,7 +69,7 @@ This is because components require deferred instantiation. Deferral of instantia
 
 ## train
 
-```
+```bash
 python cli.py train -c configs/gptalpha.cfg.py
 ```
 
@@ -86,7 +86,7 @@ Consider trying other huggingface datasets, such as OpenWebText:
 The example config files show how to use [WandB](https://wandb.ai/home) for logging, but any logger, multiple loggers, or even no logger can be used. See [lightning docs](https://lightning.ai/docs/app/stable/) for more info.
 
 You can easily choose which metrics to log using the config system and parameterize them like so (or create new ones):
-```
+```python
 metric_factories=dict(
     loss=lambda: metrics.Loss(),
     acc=lambda: metrics.Accuracy()
@@ -103,7 +103,7 @@ It can also cause very slow startup times and even break, if you use features in
 
 To have a validation done and checkpoint written, add the following config setting to trainer:
 
-```
+```python
 trainer_factory = lambda: lightning.Trainer(
     val_check_interval=1024, # choose whatever number of steps you'd like here
 )
@@ -113,7 +113,7 @@ trainer_factory = lambda: lightning.Trainer(
 
 Continue a training run from an existing checkpoint by supplying the following kind of config setting:
 
-```
+```python
 trainer_factory = lambda: lit.LightningMetaTrainer(
     ckpt_path='checkpoints/epoch=0-step=256.ckpt',
 )
@@ -121,7 +121,7 @@ trainer_factory = lambda: lit.LightningMetaTrainer(
 
 ## run a model for inference
 
-```
+```bash
 python cli.py eval -c configs/gptalpha.cfg.py
 ```
 Inference is not the main mission of GPT Core, and will be updated to be more flexible and useful in a future release.
