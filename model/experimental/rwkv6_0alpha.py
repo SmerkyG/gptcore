@@ -36,25 +36,11 @@ from model.rwkv import RWKVConfig
 
 import norm
 
-def taylor_exp(x: Tensor):
-    ones = torch.ones(x[..., :1].shape).to(x.device)
-    x2 = (x.unsqueeze(-1) * x.unsqueeze(-2)).flatten(-2) / math.sqrt(2)
-    return torch.cat([ones, x, x2], dim=-1)
-
 class RWKV6_0_Alpha_AttentionSubLayer(model.core.TransformerLayerPart, model.interface.IAttentionSubLayer):
     def __init__(self, qkv_norm_factory : Callable = Factory(norm.RMSNorm, weight_scaling=False), ):
         super().__init__()
 
         hparams, layer_id = self.hparams, self.layer_id
-
-        T = hparams.max_sequence_length
-        D = hparams.d_model
-        H = hparams.n_head
-        KVH = int(H * hparams.n_kv_head_ratio)
-        K = int(hparams.d_qk_ratio * D / H)
-        Q = int(hparams.d_qk_ratio * D / H)
-        V = int(hparams.d_v_ratio * D / H)
-        G = V
 
         args = RWKVConfig(hparams)
 
@@ -112,12 +98,7 @@ class RWKV6_0_Alpha_AttentionSubLayer(model.core.TransformerLayerPart, model.int
         self.key = nn.Linear(args.n_embd, self.n_kv_head * self.k_head_size, bias=False)
         self.value = nn.Linear(args.n_embd, self.n_kv_head * self.v_head_size, bias=False)
         self.output = nn.Linear(args.dim_v, args.n_embd, bias=False)
-        #self.gate = nn.Linear(args.n_embd, args.dim_v, bias=False)
-        self.gate = nn.Linear(D, H * G, bias=False)
-
-        self.q_norm = qkv_norm_factory(Q)
-        self.k_norm = qkv_norm_factory(K)
-        self.v_norm = qkv_norm_factory(V)
+        self.gate = nn.Linear(args.n_embd, args.dim_v, bias=False)
 
         self.rotary_positional_embedding = hparams.rotary_positional_embedding_factory(hparams.max_sequence_length, int(hparams.d_qk_ratio * hparams.d_model / hparams.n_head))
 
@@ -163,13 +144,7 @@ class RWKV6_0_Alpha_AttentionSubLayer(model.core.TransformerLayerPart, model.int
         r = self.receptance(rx).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(kx).view(B, T, KVH, K).transpose(1, 2)      # BHTK
         v = self.value(vx).view(B, T, KVH, V).transpose(1, 2)    # BHTV
-        #g = F.silu(self.gate(gx))
         g = self.gate(gx)
-
-        # normalize each head
-        r = self.q_norm(r)
-        k = self.k_norm(k)
-        v = self.v_norm(v)
 
         # rotate queries and keys via RoPE / XPos
         r, k = self.rotary_positional_embedding((r, k))
@@ -188,7 +163,6 @@ class RWKV6_0_Alpha_AttentionSubLayer(model.core.TransformerLayerPart, model.int
         kv_state = recurrent_memory
         if kv_state is None:
             kv_state = torch.zeros(B, H, K, V, device=r.device, dtype=r.dtype)
-            #kv_state = torch.zeros(B, H, 1+K+K*K, V, device=r.device, dtype=r.dtype)
 
         if r.dtype == torch.bfloat16 and kv_state.dtype != torch.bfloat16:
             kv_state = kv_state.contiguous().to(torch.bfloat16)        
@@ -208,6 +182,6 @@ class RWKV6_0_Alpha_AttentionSubLayer(model.core.TransformerLayerPart, model.int
         # squeeze all the head embeddings together into a single dimension
         out = out.transpose(1, 2).reshape(B, T, H*V) # (B, H, T, V) -> (B, T, H*V)
 
-        out = self.output(g * out)
+        out = self.output(out * g)
 
-        return norm.RMSNorm.F(out) / math.sqrt(2 * self.hparams.n_layer)
+        return out

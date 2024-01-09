@@ -185,8 +185,8 @@ class RWKV5_1_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         if kv_state.dtype != r.dtype:
             kv_state = kv_state.contiguous().to(r.dtype) 
 
-        w = torch.exp(-torch.exp(time_decay)).unsqueeze(-1).unsqueeze(-1).expand(1,H,T,K)
-        u = time_faaaa.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand(1,H,1,K)
+        w = torch.exp(-torch.exp(time_decay)).view(1,H,1,1).expand(1,H,T,K)
+        u = time_faaaa.view(1,H,1,1).expand(1,H,1,K)
         out, s = rwkv_inner(r, k, v, w, u, kv_state)
 
         out = out.transpose(1,2).reshape(B*T, H*V)
