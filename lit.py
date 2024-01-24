@@ -205,6 +205,7 @@ class CoreLightningModel(LightningModule):
 
         self.tokens_processed = 0
         self.tokens_processed_prev_log = 1
+        self.all_nodes_tokens_processed = 0
         self.last_iter_time = None
         self.last_log_runtime = 0.0
         self.total_runtime = 0.0
@@ -215,7 +216,8 @@ class CoreLightningModel(LightningModule):
         checkpoint['runtime'] = self.total_runtime
 
     def on_load_checkpoint(self, checkpoint):
-        self.tokens_processed = checkpoint['tokens']
+        self.all_nodes_tokens_processed = checkpoint['tokens']
+        self.tokens_processed = self.all_nodes_tokens_processed // (self.trainer.num_devices * self.trainer.num_nodes)
         self.total_runtime = checkpoint['runtime']
 
     def forward(self, x: torch.Tensor, y: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -258,6 +260,7 @@ class CoreLightningModel(LightningModule):
             metric.update(margs)
 
         self.tokens_processed += batch[0].size(-2) * batch[0].size(-1)
+        self.all_nodes_tokens_processed = self.tokens_processed * self.trainer.num_devices * self.trainer.num_nodes
 
         t = time.time()
         if self.last_iter_time is not None:
@@ -270,7 +273,7 @@ class CoreLightningModel(LightningModule):
 
         if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
             ms_since = (self.total_runtime - self.last_log_runtime) * 1000.
-            ktok_per_sec = (self.tokens_processed - self.tokens_processed_prev_log) / ms_since
+            ktok_per_sec = ((self.tokens_processed - self.tokens_processed_prev_log) / ms_since) * self.trainer.num_devices * self.trainer.num_nodes
             ms_per = ms_since / self.trainer.log_every_n_steps
             self.last_log_runtime = self.total_runtime
             if self.trainer.is_global_zero:
@@ -281,7 +284,7 @@ class CoreLightningModel(LightningModule):
                 else:
                     gb = 0
     
-                str = f"epoch:{self.current_epoch} token:{self.tokens_processed:,} step:{batch_idx} "
+                str = f"epoch:{self.current_epoch} token:{self.all_nodes_tokens_processed:,} step:{batch_idx} "
                 for name, metric in self.metrics.items():
                     metric_value = metric.compute()
                     metric.clear()
@@ -292,7 +295,7 @@ class CoreLightningModel(LightningModule):
 
                 self.tokens_processed_prev_log = self.tokens_processed
 
-            self.log("tokens", float(self.tokens_processed), on_step=True, rank_zero_only=True)
+            self.log("tokens", float(self.all_nodes_tokens_processed), on_step=True, rank_zero_only=True)
         
         if self.loss_wrapper is not None:
             loss = self.loss_wrapper.apply(loss, logits)
@@ -317,7 +320,7 @@ class CoreLightningModel(LightningModule):
             # on_epoch causes this to be logged in aggregate rather than per batch
             self.log('val/'+name, metric.compute(), on_epoch=True, rank_zero_only=True)
             metric.clear()
-        self.log("tokens", float(self.tokens_processed), on_epoch=True, rank_zero_only=True)
+        self.log("tokens", float(self.all_nodes_tokens_processed), on_epoch=True, rank_zero_only=True)
         return logits
 
     def on_validation_epoch_end(self):
