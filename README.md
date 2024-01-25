@@ -51,7 +51,7 @@ cli.Config(
     model_factory = lambda: model.core.Decoder(
         max_sequence_length=MAX_SEQUENCE_LENGTH,
     ),
-    trainer_factory = lambda: lit.LightningMetaTrainer(
+    trainer_factory = lambda: lit.CoreLightningTrainer(
         optimizer_factory = lambda: torch.optim.Adam(lr=6e-4),
     ),
 )
@@ -73,7 +73,7 @@ This is because components require deferred instantiation. Deferral of instantia
 python cli.py train -c configs/gptalpha.cfg.py
 ```
 
-GPT Core currently supports the Lightning trainer via its class `lit.LightningMetaTrainer`. The GPT Core class `lit.LightningMetaTrainer` exactly matches the Lightning API, slightly flattened for ease of use in config files. So as you explore the autocomplete for LightningMetaTrainer you can look at the [lightning docs](https://lightning.ai/docs/app/stable/) to learn how to do various tasks like continue from a checkpoint, add custom callbacks during training, etc. 
+GPT Core currently supports the Lightning trainer via its class `lit.CoreLightningTrainer`. The GPT Core class `lit.CoreLightningTrainer` exactly matches the Lightning API, slightly flattened for ease of use in config files. So as you explore the autocomplete for CoreLightningTrainer you can look at the [lightning docs](https://lightning.ai/docs/app/stable/) to learn how to do various tasks like continue from a checkpoint, add custom callbacks during training, etc. 
 
 ## datasets
 
@@ -114,7 +114,7 @@ trainer_factory = lambda: lightning.Trainer(
 Continue a training run from an existing checkpoint by supplying the following kind of config setting:
 
 ```python
-trainer_factory = lambda: lit.LightningMetaTrainer(
+trainer_factory = lambda: lit.CoreLightningTrainer(
     ckpt_path='checkpoints/epoch=0-step=256.ckpt',
 )
 ```
@@ -173,8 +173,7 @@ Sequences in the training data that do not reach the end of the sequence length 
 - improved inference
 - allow separation of config for model, logging, dataset
 - testing apparatus (BLEU score etc.)
+- Mixture of Experts
 
 #### Possible future additions to GPT Alpha:
-- grouped query attention https://arxiv.org/abs/2305.13245
 - MixCE
-- MoE
