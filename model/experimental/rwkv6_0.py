@@ -225,7 +225,7 @@ class RWKV6_0_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
             kv_state = kv_state.contiguous().to(torch.bfloat16)        
 
         w = time_decay.unsqueeze(0).unsqueeze(2) # 1H1K
-        w = w + (torch.tanh(wx @ self.td_w1) @ self.td_w2).view(B, H, T, K) # BHTK
+        w = w + (torch.tanh(wx @ self.td_w1) @ self.td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
         w = torch.exp(-torch.exp(w))
 
         u = time_first.unsqueeze(0).unsqueeze(2) # 1H1K
