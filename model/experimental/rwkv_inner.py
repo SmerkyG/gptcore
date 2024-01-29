@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 # 32 is optimal chunk length (longer will use too much memory, shorter is inefficient)
-def rwkv_inner(r,k,v,w,u,kv_state,chunk_len=32):
+def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32,precision_dtype:torch.dtype=torch.float32):
     """
     expects
     r : (B,H,L,K)
@@ -33,9 +33,11 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len=32):
         N = L // T
 
         # this has to be done to avoid numerical instability (inf/NaN) when w is used as a divisor up to chunk_length//2 places away (so precision_min_val^(T//2) has to be in fp range)
-        precision_dtype, precision_min_val = torch.float32, 0.02 # good for fp32 
-        #precision_dtype, precision_min_val = torch.float64, 1e-10 # good for fp64
-        
+        assert(precision_dtype == torch.float32 or precision_dtype == torch.float64)
+        if precision_dtype == torch.float32:
+            precision_min_val = 0.005 # good for fp32 (1.175e-38 ^ (1/16.0) < 0.00426)
+        elif precision_dtype == torch.float64:
+            precision_min_val = 1e-10 # good for fp64 (1.7e-308 ^ (1/16.0) < 5.8e-20)
         w = w.clamp(precision_min_val)
 
         # calculate cumulative decay in log space where it won't overflow
@@ -46,7 +48,7 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len=32):
         wc_log_cum = wc_log.cumsum(dim=-2)
 
         # chunked view of shifted_w_log
-        shifted_wc_log_cum = torch.cat([torch.zeros_like(wc_log_cum[:,:,:,:1,:]), wc_log_cum[:,:,:,:-1,:]], dim=-2)
+        shifted_wc_log_cum = torch.cat([torch.zeros_like(wc_log_cum[...,:1,:]), wc_log_cum[...,:-1,:]], dim=-2)
 
 
         # NOTE - we have to apply the decay weight from TWO ahead.. ONE ahead gets no decay (log==0)
@@ -79,15 +81,33 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len=32):
         u = u.unsqueeze(2).to(r.dtype) # (1,H,1,1,K)
 
         # parallel calculation of all intra-chunk attention contributions
-        wc_log_offset = shifted_wc_log_cum[:,:,:,T//2:T//2+1,:] # B,H,N,1,K
-        r_decay = (shifted_wc_log_cum - wc_log_offset).to(precision_dtype).exp() # B,H,N,T,K
-        k_inv_decay = (wc_log_offset - wc_log_cum).to(precision_dtype).exp() # B,H,N,T,K
-        a = ((r*r_decay) @ (k*k_inv_decay).mT).to(r.dtype).tril(-1) # B,H,N,T,T
+
+        wc_log_cum = wc_log_cum.view(w.size(0),H,N,2,T//2,K)        
+        shifted_wc_log_cum = shifted_wc_log_cum.view(w.size(0),H,N,2,T//2,K)
+        wc_log_offset = shifted_wc_log_cum[...,T//4:T//4+1,:] # B,H,N,2,1,K
+
+        # intra-subchunk
+        uu = u.view(1,H,1,1,1,K)
+        rr_decay = (shifted_wc_log_cum - wc_log_offset).to(precision_dtype).exp() # B,H,N,2,T//2,K
+        kk_inv_decay = (wc_log_offset - wc_log_cum).to(precision_dtype).exp() # B,H,N,2,T//2,K
+        rr = r.view(B,H,N,2,T//2,K)
+        kk = k.view(B,H,N,2,T//2,K)
+        vv = v.view(B,H,N,2,T//2,V)
+        a = ((rr * rr_decay) @ (kk * kk_inv_decay).mT).to(r.dtype).tril(-1) # B,H,N,2,T,T
         # add u term to attention (NOTE - the tril(-1) above zeroed the diagonal)
-        a = a + torch.einsum('bhntk,bhntk->bhnt', r, u * k).diag_embed()
-        out = a @ v # BHNTV
-        # alternate way of adding in u
-        #outc = outc + torch.einsum('bhntk,bhntk,bhntv->bhntv', rc, u.unsqueeze(-2) * kc, vc) 
+        a = a + torch.einsum('bhnztk,bhnztk->bhnzt', rr, uu * kk).diag_embed()
+        out = a @ vv # BHNTV
+
+        # inter-subchunk
+        rr = rr[...,1:2,:,:]
+        rr_decay = rr_decay[...,1:2,:,:]
+        kk = kk[...,0:1,:,:]
+        #kk_inv_decay = kk_inv_decay[...,0:1,:,:]
+        kk_inv_decay = (wc_log_offset[...,1:2,:,:] - wc_log_cum[...,0:1,:,:]).to(precision_dtype).exp() # B,H,N,2,T//2,K
+        vv = vv[...,0:1,:,:]
+        out[...,1:2,:,:] = out[...,1:2,:,:] + ((rr * rr_decay) @ (kk * kk_inv_decay).mT).to(r.dtype) @ vv
+
+        out = out.view(B,H,N,T,V)
 
         # parallel precalculation of chunked (k*wk).mT@v for use in recurrent state calc below
         wkv = (k * w_inter).mT @ v # BHNKV
