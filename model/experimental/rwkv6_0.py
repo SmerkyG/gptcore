@@ -63,8 +63,8 @@ def sanity_check():
     u = torch.rand(1,H,1,K)
     kv_state = torch.zeros(B,H,K,V,device=v.device,dtype=v.dtype)
 
-    precision_dtype, precision_min_val = torch.float32, 0.02 # good for fp32 
-    #precision_dtype, precision_min_val = torch.float64, 1e-10 # good for fp64   
+    #precision_dtype, precision_min_val = torch.float64, 1e-10 # good for fp64 (1.7e-308 ^ (1/16.0) == 5.8e-20)
+    precision_dtype, precision_min_val = torch.float32, 0.005 # good for fp32 (1.175e-38 ^ (1/16.0) < 0.00426)
     w = w.clamp(precision_min_val)
 
     # recurrent
