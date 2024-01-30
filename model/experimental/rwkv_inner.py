@@ -81,9 +81,9 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32,precision_dtype:torch.dtype=t
         u = u.unsqueeze(2).to(r.dtype) # (1,H,1,1,K)
 
         r_length = torch.linalg.vector_norm(r, dim=-1).unsqueeze(-1)
-        r_unit_length = r / (r_length + 1e-20)
+        r_unit_length = r / (r_length + 1e-14)
         k_length = torch.linalg.vector_norm(k, dim=-1).unsqueeze(-1)
-        k_unit_length = k / (k_length + 1e-20)
+        k_unit_length = k / (k_length + 1e-14)
 
         # parallel calculation of all intra-chunk attention contributions
         wc_log_offset = shifted_wc_log_cum[...,T//2:T//2+1,:] # B,H,N,1,K
