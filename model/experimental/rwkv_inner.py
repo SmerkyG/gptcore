@@ -48,8 +48,7 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32,precision_dtype:torch.dtype=t
         wc_log_cum = wc_log.cumsum(dim=-2)
 
         # chunked view of shifted_w_log
-        shifted_wc_log_cum = torch.cat([torch.zeros_like(wc_log_cum[...,:1,:]), wc_log_cum[...,:-1,:]], dim=-2)
-
+        shifted_wc_log_cum = F.pad(wc_log_cum, (0, 0, 1, -1), value=0.)
 
         # NOTE - we have to apply the decay weight from TWO ahead.. ONE ahead gets no decay (log==0)
         # pre-applied weights
