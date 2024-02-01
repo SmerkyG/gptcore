@@ -206,6 +206,6 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         out = self.output(out * g)
 
         if n_padding != 0:
-            out = out[..., :-n_padding, :] # BHTV
+            out = out[..., :-n_padding, :] # BTC
 
         return out
