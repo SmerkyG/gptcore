@@ -146,6 +146,14 @@ class RWKV5_1_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
     def forward(self, xq : Tensor, xk : Tensor, xv : Tensor, recurrent_memory : Optional[Tensor] = None):
         x = xq # FIXME - support encoder-decoder models
 
+        # 24 is optimal chunk length (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
+        chunk_len = 24
+
+        # padding to support fast path for non-exact chunk size multiple sequence lengths        
+        n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
+        if n_padding != 0:
+            x = F.pad(x, [0, 0, 0, n_padding, 0, 0])
+
         H = self.n_head
         KVH = self.n_kv_head
         R = self.r_head_size
@@ -187,10 +195,14 @@ class RWKV5_1_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
 
         w = torch.exp(-torch.exp(time_decay)).view(1,H,1,1).expand(1,H,T,K)
         u = time_faaaa.view(1,H,1,1).expand(1,H,1,K)
-        out, s = rwkv_inner(r, k, v, w, u, kv_state)
+        out, s = rwkv_inner(r, k, v, w, u, kv_state, chunk_len)
 
         out = out.transpose(1,2).reshape(B*T, H*V)
         out = self.ln_x(out / self.args.head_size_divisor).view(B, T, H*V)
 
         out = self.output(out * g)        
+
+        if n_padding != 0:
+            out = out[..., :-n_padding, :] # BHTV
+
         return out

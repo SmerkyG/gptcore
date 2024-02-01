@@ -122,8 +122,6 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_kv_head, self.k_head_size)) # (KVH, K)
 
-        #self.time_mixer_k = model.core.DataDependentTimeLerp()
-        #self.time_mixer_v = model.core.DataDependentTimeLerp()
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(args.n_embd, self.n_head * self.r_head_size, bias=False)
         self.key = nn.Linear(args.n_embd, self.n_kv_head * self.k_head_size, bias=False)
@@ -151,6 +149,14 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
     def forward(self, xq : Tensor, xk : Tensor, xv : Tensor, recurrent_memory : Optional[Tensor] = None):
         x = xq # FIXME - support encoder-decoder models
 
+        # 24 is optimal chunk length (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
+        chunk_len = 24
+
+        # padding to support fast path for non-exact chunk size multiple sequence lengths        
+        n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
+        if n_padding != 0:
+            x = F.pad(x, [0, 0, 0, n_padding, 0, 0])
+
         H = self.n_head
         KVH = self.n_kv_head
         R = self.r_head_size
@@ -164,10 +170,6 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         vx = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         rx = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         gx = x * self.time_mix_g + xx * (1 - self.time_mix_g)
-        # Mix kx, vx with the previous timestep in a learned manner to produce new time-mixed xk, xv
-        #kx = self.time_mixer_k(kx)
-        #vx = self.time_mixer_v(vx)
-        #rx = gx = x
 
         r = self.receptance(rx).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(kx).view(B, T, KVH, K).transpose(1, 2)      # BHTK
@@ -196,10 +198,14 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
 
         w = torch.exp(-torch.exp(time_decay)).view(1,H,1,K).expand(1,H,T,K)
         u = time_faaaa.float().view(1,H,1,K)
-        out, s = rwkv_inner(r, k, v, w, u, kv_state)
+        out, s = rwkv_inner(r, k, v, w, u, kv_state, chunk_len)
 
         out = out.transpose(1,2).reshape(B*T, H*V)
         out = self.ln_x(out / self.args.head_size_divisor).view(B, T, H*V)
 
         out = self.output(out * g)
+
+        if n_padding != 0:
+            out = out[..., :-n_padding, :] # BHTV
+
         return out
