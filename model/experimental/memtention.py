@@ -416,7 +416,7 @@ class QWiKSilver_AttentionSubLayer(model.core.TransformerLayerPart, model.interf
             skv_state = skv_state.contiguous().to(q.dtype)
 
         w = time_decay.view(1, H, 1, K)
-        w = w + (torch.tanh(wx @ self.td_w1) @ self.td_w2).view(B, H, T, K) # BHTK
+        w = w + (torch.tanh(wx @ self.td_w1) @ self.td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
         w = torch.exp(-torch.exp(w))
 
         u = time_first.view(1, H, 1, K)
