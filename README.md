@@ -26,7 +26,7 @@ If you want to compare training today's open source LLMs, invent new ones, do ex
 ## install
 
 ```
-pip install torch lightning deepspeed einops transformers datasets wandb
+pip install torch lightning deepspeed einops transformers datasets wandb torchdata
 ```
 
 ## configure
