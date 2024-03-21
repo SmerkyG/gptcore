@@ -134,7 +134,7 @@ class RWKV5_2_AttentionSubLayer(model.core.TransformerLayerPart, model.interface
         self.ln_x = nn.GroupNorm(self.n_kv_head, args.dim_v)
 
     def post_init_fn(self, myself):
-        zero = [self.receptance, self.key, self.output]
+        zero = [self.output]
         for m in zero:
             nn.init.zeros_(m.weight)
         # FIXME - init ln_x with something like layer_scale * 0.7
